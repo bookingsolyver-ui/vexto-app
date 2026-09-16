@@ -52,6 +52,9 @@ export default function Dashboard() {
   }, []);
 
 useEffect(() => {
+    // Variável temporária para a rota da IA (podes substituir pelos pontos reais depois)
+    const routeCoordinates: [number, number][] = []; 
+
     supabase
       .from('vehicle_positions')
       .select('*')
@@ -67,7 +70,26 @@ useEffect(() => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${LIVE_VEHICLE_ID}` },
-        (payload) => setLivePosition(payload.new as LiveVehiclePosition)
+        (payload) => {
+          const newPos = payload.new as any; // Usar 'any' evita conflitos de nomes de propriedades
+          setLivePosition(newPos);
+
+          // === CONTROLO DE DESVIO DA IA SEGURO ===
+          // Usamos newPos.lng ou newPos.longitude conforme o que a base de dados envia
+          const currentLon = newPos.longitude ?? newPos.lng;
+          const currentLat = newPos.latitude ?? newPos.lat;
+
+          if (currentLon && currentLat && routeCoordinates.length > 0) {
+            const saiuDoTrajeto = checkRouteDeviation(
+              [currentLon, currentLat], 
+              routeCoordinates
+            );
+
+            if (saiuDoTrajeto) {
+              console.warn("⚠️ ALERTA: Motorista desviou-se da linha branca da IA!");
+            }
+          }
+        }
       )
       .subscribe();
 
@@ -505,4 +527,85 @@ useEffect(() => {
 
     </main>
   );
+}
+
+// ==========================================
+// 1. FUNÇÃO PARA DESENHAR A LINHA BRANCA
+// ==========================================
+async function fetchAndDrawRoute(map: any, startCoords: [number, number], endCoords: [number, number], token: string) {
+  const query = await fetch(
+    `https://api.mapbox.com/directions/v5/mapbox/driving/${startCoords[0]},${startCoords[1]};${endCoords[0]},${endCoords[1]}?geometries=geojson&access_token=${token}`
+  );
+  const json = await query.json();
+  
+  if (!json.routes || json.routes.length === 0) return;
+  
+  const routeGeoJSON = json.routes[0].geometry;
+
+  if (map.getSource('route')) {
+    map.getSource('route').setData({
+      type: 'Feature',
+      properties: {},
+      geometry: routeGeoJSON
+    });
+  } else {
+    map.addSource('route', {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        properties: {},
+        geometry: routeGeoJSON
+      }
+    });
+
+    map.addLayer({
+      id: 'route-line',
+      type: 'line',
+      source: 'route',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': '#ffffff', // Linha branca do trajeto
+        'line-width': 5,
+        'line-opacity': 0.85
+      }
+    });
+  }
+}
+
+// ==========================================
+// 2. FUNÇÕES DE CÁLCULO E ALERTA DE DESVIO
+// ==========================================
+function getDistanceFromLatLonInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371000; // Raio da Terra em metros
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function checkRouteDeviation(driverCurrentPos: [number, number], routeCoordinates: [number, number][]) {
+  const THRESHOLD_METERS = 100; // Limite de tolerância de desvio (100 metros)
+  
+  let minDistance = Infinity;
+  for (const coord of routeCoordinates) {
+    const dist = getDistanceFromLatLonInMeters(
+      driverCurrentPos[1], driverCurrentPos[0], 
+      coord[1], coord[0]
+    );
+    if (dist < minDistance) {
+      minDistance = dist;
+    }
+  }
+
+  if (minDistance > THRESHOLD_METERS) {
+    return true; // Dispara o alerta visual no dashboard do gestor se sair mais de 100m da linha
+  }
+  return false;
 }
