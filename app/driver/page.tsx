@@ -4,40 +4,41 @@ import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { supabase } from '../../lib/supabaseClient';
-import { Navigation, AlertCircle, Package } from 'lucide-react';
+import { Navigation, AlertCircle, Package, PowerOff, Wifi } from 'lucide-react';
 
 const MEU_VEICULO_ID = "a708d088-4dff-4a95-8475-854b76a5295a"; 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
-export default function DriverMapPage() {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<mapboxgl.Map | null>(null);
-  
+export default function DriverPage() {
   const [tracking, setTracking] = useState(false);
   const [pendingOrder, setPendingOrder] = useState<any>(null);
   const [activeOrder, setActiveOrder] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  
+  const [sentCount, setSentCount] = useState(0);
+
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const map = useRef<mapboxgl.Map | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  // 1. Inicializar o Mapa do Mapbox no Telemóvel
+  // Inicializar o mapa apenas quando o turno está ativo e o container existe
   useEffect(() => {
-    if (!mapContainer.current) return;
+    if (!tracking || !mapContainer.current) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/dark-v11',
-      center: [-9.3235, 38.6826], // Coordenadas iniciais (Oeiras)
-      zoom: 14,
+      center: [-9.3235, 38.6826],
+      zoom: 15,
     });
 
     return () => {
       map.current?.remove();
+      map.current = null;
     };
-  }, []);
+  }, [tracking]);
 
-  // 2. Escutar Entregas Pendentes
+  // Escutar encomendas pendentes
   useEffect(() => {
     async function fetchOrder() {
       const { data } = await supabase
@@ -59,51 +60,7 @@ export default function DriverMapPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // 3. Aceitar Entrega e Desenhar Linha no Mapa
-  async function handleAcceptOrder() {
-    if (!pendingOrder) return;
-
-    await supabase
-      .from('deliveries')
-      .update({ status: 'in_progress', driver_id: MEU_VEICULO_ID })
-      .eq('id', pendingOrder.id);
-
-    setActiveOrder(pendingOrder);
-    setPendingOrder(null);
-    startTracking();
-
-    // Desenhar a rota simulada no mapa do telemóvel
-    if (map.current) {
-      // Exemplo de coordenadas de rota entre Oeiras e Lisboa/Outro ponto
-      const routeGeoJSON: any = {
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [-9.3235, 38.6826], // Ponto atual
-            [-9.2000, 38.7100], // Destino intermédio
-            [-9.1393, 38.7223]  // Destino final
-          ]
-        }
-      };
-
-      if (map.current.getSource('driver-route')) {
-        (map.current.getSource('driver-route') as mapboxgl.GeoJSONSource).setData(routeGeoJSON);
-      } else {
-        map.current.addSource('driver-route', { type: 'geojson', data: routeGeoJSON });
-        map.current.addLayer({
-          id: 'driver-route-line',
-          type: 'line',
-          source: 'driver-route',
-          layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 'line-color': '#22c55e', 'line-width': 6, 'line-opacity': 0.9 }
-        });
-      }
-    }
-  }
-
-  // 4. GPS e Transmissão
+  // Iniciar Turno e GPS
   function startTracking() {
     if (!navigator.geolocation) {
       setError('Geolocalização não suportada.');
@@ -114,11 +71,11 @@ export default function DriverMapPage() {
       async (pos) => {
         const { latitude, longitude, heading, speed } = pos.coords;
 
-        // Atualizar mapa para centrar no motorista
-        map.current?.flyTo({ center: [longitude, latitude], zoom: 15 });
+        if (map.current) {
+          map.current.flyTo({ center: [longitude, latitude], zoom: 15 });
+        }
 
-        // Enviar para Supabase
-        await supabase.from('vehicle_positions').insert({
+        const { error: insertError } = await supabase.from('vehicle_positions').insert({
           vehicle_id: MEU_VEICULO_ID,
           lat: latitude,
           lng: longitude,
@@ -127,27 +84,81 @@ export default function DriverMapPage() {
           updated_at: new Date().toISOString(),
         });
 
-        await supabase.from('vehicles').update({ 
-          status: 'online', 
-          last_update: new Date().toISOString() 
-        }).eq('id', MEU_VEICULO_ID);
+        if (!insertError) {
+          await supabase.from('vehicles').update({ 
+            status: 'online', 
+            last_update: new Date().toISOString() 
+          }).eq('id', MEU_VEICULO_ID);
+          setSentCount((n) => n + 1);
+        }
       },
       (err) => setError(err.message),
       { enableHighAccuracy: true }
     );
+
     setTracking(true);
   }
 
+  // Terminar Turno / Fechar Serviço
+  function stopTracking() {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    setTracking(false);
+    setActiveOrder(null);
+    supabase.from('vehicles').update({ status: 'offline' }).eq('id', MEU_VEICULO_ID);
+  }
+
+  // Aceitar Encomenda
+  async function handleAcceptOrder() {
+    if (!pendingOrder) return;
+    await supabase
+      .from('deliveries')
+      .update({ status: 'in_progress', driver_id: MEU_VEICULO_ID })
+      .eq('id', pendingOrder.id);
+
+    setActiveOrder(pendingOrder);
+    setPendingOrder(null);
+  }
+
+  // ==========================================
+  // ESTADO 1: TURNO DESLIGADO (Ecrã Inicial)
+  // ==========================================
+  if (!tracking) {
+    return (
+      <main className="min-h-screen bg-black text-white flex flex-col items-center justify-between p-8 font-sans">
+        <div className="flex flex-col items-center gap-2 mt-8">
+          <h1 className="text-xl font-medium tracking-tight">Vexto Mobile</h1>
+          <p className="text-zinc-500 text-xs tracking-widest uppercase">Motorista — Bus 6023</p>
+        </div>
+
+        <button
+          onClick={startTracking}
+          className="w-48 h-48 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex flex-col items-center justify-center gap-3 shadow-[0_0_60px_rgba(34,197,94,0.2)] hover:bg-emerald-500/20 transition-all duration-500"
+        >
+          <Navigation className="w-8 h-8 text-emerald-400" />
+          <span className="text-lg font-medium tracking-tight text-emerald-400">INICIAR TURNO</span>
+        </button>
+
+        <div className="text-zinc-600 text-xs mb-4">Toque para ligar o GPS e abrir o serviço</div>
+      </main>
+    );
+  }
+
+  // ==========================================
+  // ESTADO 2: TURNO ATIVO (Mapa + Gestão de Pedidos + Fechar Serviço)
+  // ==========================================
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
       
-      {/* MAPA EM TELA CHEIA */}
+      {/* Mapa Mapbox em Tela Cheia */}
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
 
-      {/* PAINEL FLUTUANTE DE PEDIDOS (TOPO) */}
+      {/* Topo: Pedidos Pendentes ou Entrega Ativa */}
       <div className="absolute top-4 inset-x-4 z-10 flex flex-col gap-2">
         {pendingOrder && !activeOrder && (
-          <div className="bg-zinc-900/90 backdrop-blur-md border border-amber-500/40 p-4 rounded-2xl shadow-2xl flex flex-col gap-3">
+          <div className="bg-zinc-900/95 backdrop-blur-md border border-amber-500/40 p-4 rounded-2xl shadow-2xl flex flex-col gap-3">
             <div className="flex items-center gap-2 text-amber-400 font-medium text-sm">
               <Package className="w-5 h-5" /> Nova Entrega Disponível
             </div>
@@ -156,26 +167,32 @@ export default function DriverMapPage() {
               onClick={handleAcceptOrder}
               className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-3 rounded-xl text-sm transition-all shadow-lg"
             >
-              ACEITAR E VER ROTA
+              ACEITAR ENTREGA
             </button>
           </div>
         )}
 
         {activeOrder && (
-          <div className="bg-zinc-900/90 backdrop-blur-md border border-emerald-500/40 p-3 rounded-xl shadow-xl flex justify-between items-center">
-            <span className="text-emerald-400 text-xs font-semibold">🟢 Em Rota para o Destino</span>
-            <span className="text-[10px] text-zinc-400">GPS Ativo</span>
+          <div className="bg-zinc-900/95 backdrop-blur-md border border-emerald-500/40 p-3 rounded-xl shadow-xl flex justify-between items-center">
+            <span className="text-emerald-400 text-xs font-semibold">🟢 Em Rota: {activeOrder.dropoff_address}</span>
           </div>
         )}
       </div>
 
-      {/* ESTADO DO GPS (EMBAIXO) */}
-      <div className="absolute bottom-6 inset-x-4 z-10 flex justify-between items-center bg-zinc-900/80 backdrop-blur-md border border-white/10 p-4 rounded-2xl">
+      {/* Fundo: Opção para Fechar o Serviço / Terminar Turno */}
+      <div className="absolute bottom-6 inset-x-4 z-10 flex items-center justify-between bg-zinc-900/90 backdrop-blur-md border border-white/10 p-4 rounded-2xl shadow-2xl">
         <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${tracking ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-500'}`} />
-          <span className="text-xs text-white font-medium">{tracking ? 'Navegação Ativa' : 'Em Espera'}</span>
+          <Wifi className="w-4 h-4 text-emerald-400 animate-pulse" />
+          <span className="text-xs text-white font-medium">{sentCount} pacotes enviados</span>
         </div>
-        {error && <span className="text-xs text-red-400 flex items-center gap-1"><AlertCircle className="w-4 h-4"/>{error}</span>}
+
+        <button
+          onClick={stopTracking}
+          className="flex items-center gap-2 bg-red-500/20 border border-red-500/40 hover:bg-red-500/30 text-red-400 px-4 py-2.5 rounded-xl text-xs font-bold transition-all"
+        >
+          <PowerOff className="w-4 h-4" />
+          FECHAR SERVIÇO
+        </button>
       </div>
 
     </main>
