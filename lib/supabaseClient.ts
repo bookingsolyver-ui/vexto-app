@@ -17,3 +17,4 @@ export interface LiveVehiclePosition {
   speed_kmh: number | null;
   updated_at: string;
 }
+
