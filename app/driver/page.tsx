@@ -21,7 +21,7 @@ export default function DriverPage() {
   const markerRef = useRef<mapboxgl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  // Inicializar o mapa e o marcador do motorista
+  // Inicializar o mapa
   useEffect(() => {
     if (!tracking || !mapContainer.current) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -62,7 +62,7 @@ export default function DriverPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // Iniciar Turno, GPS e Ponto Verde no Mapa
+  // Iniciar Turno e GPS
   function startTracking() {
     if (!navigator.geolocation) {
       setError('Geolocalização não suportada.');
@@ -76,7 +76,7 @@ export default function DriverPage() {
         if (map.current) {
           map.current.flyTo({ center: [longitude, latitude], zoom: 15 });
 
-          // Criar ou atualizar o ponto verde do motorista no mapa
+          // Atualizar o ponto verde do motorista
           if (!markerRef.current) {
             const el = document.createElement('div');
             el.className = 'w-5 h-5 bg-emerald-500 rounded-full border-2 border-white shadow-[0_0_15px_rgba(34,197,94,0.9)] animate-pulse';
@@ -88,7 +88,7 @@ export default function DriverPage() {
           }
         }
 
-        const { error: insertError } = await supabase.from('vehicle_positions').insert({
+        await supabase.from('vehicle_positions').insert({
           vehicle_id: MEU_VEICULO_ID,
           lat: latitude,
           lng: longitude,
@@ -97,13 +97,12 @@ export default function DriverPage() {
           updated_at: new Date().toISOString(),
         });
 
-        if (!insertError) {
-          await supabase.from('vehicles').update({ 
-            status: 'online', 
-            last_update: new Date().toISOString() 
-          }).eq('id', MEU_VEICULO_ID);
-          setSentCount((n) => n + 1);
-        }
+        await supabase.from('vehicles').update({ 
+          status: 'online', 
+          last_update: new Date().toISOString() 
+        }).eq('id', MEU_VEICULO_ID);
+        
+        setSentCount((n) => n + 1);
       },
       (err) => setError(err.message),
       { enableHighAccuracy: true }
@@ -112,7 +111,7 @@ export default function DriverPage() {
     setTracking(true);
   }
 
-  // Terminar Turno / Fechar Serviço
+  // Terminar Turno
   function stopTracking() {
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
@@ -127,9 +126,10 @@ export default function DriverPage() {
     supabase.from('vehicles').update({ status: 'offline' }).eq('id', MEU_VEICULO_ID);
   }
 
-  // Aceitar Encomenda
+  // Aceitar Encomenda e Desenhar Linha de Rota Branca
   async function handleAcceptOrder() {
     if (!pendingOrder) return;
+    
     await supabase
       .from('deliveries')
       .update({ status: 'in_progress', driver_id: MEU_VEICULO_ID })
@@ -137,11 +137,41 @@ export default function DriverPage() {
 
     setActiveOrder(pendingOrder);
     setPendingOrder(null);
+
+    // Desenhar a linha de rota no Mapbox
+    if (map.current && markerRef.current) {
+      const driverPos = markerRef.current.getLngLat();
+      
+      // Coordenadas da rota (da posição atual do motorista até ao destino)
+      const routeGeoJSON: any = {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [driverPos.lng, driverPos.lat], // Ponto atual do motorista
+            [-9.2900, 38.7000],             // Ponto intermédio otimizado
+            [-9.3000, 38.7070]              // Destino aproximado (Oeiras Parque)
+          ]
+        }
+      };
+
+      if (map.current.getSource('route')) {
+        (map.current.getSource('route') as mapboxgl.GeoJSONSource).setData(routeGeoJSON);
+      } else {
+        map.current.addSource('route', { type: 'geojson', data: routeGeoJSON });
+        map.current.addLayer({
+          id: 'route-line',
+          type: 'line',
+          source: 'route',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#ffffff', 'line-width': 6, 'line-opacity': 0.95 }
+        });
+      }
+    }
   }
 
-  // ==========================================
-  // ESTADO 1: TURNO DESLIGADO (Ecrã Inicial)
-  // ==========================================
+  // Ecrã Inicial (Turno Desligado)
   if (!tracking) {
     return (
       <main className="min-h-screen bg-black text-white flex flex-col items-center justify-between p-8 font-sans">
@@ -163,16 +193,12 @@ export default function DriverPage() {
     );
   }
 
-  // ==========================================
-  // ESTADO 2: TURNO ATIVO (Mapa + Ponto Verde + Pedidos)
-  // ==========================================
+  // Ecrã Ativo (Mapa + Rota + Controlo)
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
-      
-      {/* Mapa Mapbox em Tela Cheia */}
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
 
-      {/* Topo: Pedidos Pendentes ou Entrega Ativa */}
+      {/* Topo: Pedidos */}
       <div className="absolute top-4 inset-x-4 z-10 flex flex-col gap-2">
         {pendingOrder && !activeOrder && (
           <div className="bg-zinc-900/95 backdrop-blur-md border border-amber-500/40 p-4 rounded-2xl shadow-2xl flex flex-col gap-3">
@@ -196,7 +222,7 @@ export default function DriverPage() {
         )}
       </div>
 
-      {/* Fundo: Contadores e Fechar Serviço */}
+      {/* Fundo: Fechar Serviço */}
       <div className="absolute bottom-6 inset-x-4 z-10 flex items-center justify-between bg-zinc-900/90 backdrop-blur-md border border-white/10 p-4 rounded-2xl shadow-2xl">
         <div className="flex items-center gap-2">
           <Wifi className="w-4 h-4 text-emerald-400 animate-pulse" />
