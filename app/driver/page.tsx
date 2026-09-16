@@ -18,9 +18,10 @@ export default function DriverPage() {
 
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
+  const markerRef = useRef<mapboxgl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  // Inicializar o mapa apenas quando o turno está ativo e o container existe
+  // Inicializar o mapa e o marcador do motorista
   useEffect(() => {
     if (!tracking || !mapContainer.current) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -33,6 +34,7 @@ export default function DriverPage() {
     });
 
     return () => {
+      if (markerRef.current) markerRef.current.remove();
       map.current?.remove();
       map.current = null;
     };
@@ -60,7 +62,7 @@ export default function DriverPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // Iniciar Turno e GPS
+  // Iniciar Turno, GPS e Ponto Verde no Mapa
   function startTracking() {
     if (!navigator.geolocation) {
       setError('Geolocalização não suportada.');
@@ -73,6 +75,17 @@ export default function DriverPage() {
 
         if (map.current) {
           map.current.flyTo({ center: [longitude, latitude], zoom: 15 });
+
+          // Criar ou atualizar o ponto verde do motorista no mapa
+          if (!markerRef.current) {
+            const el = document.createElement('div');
+            el.className = 'w-5 h-5 bg-emerald-500 rounded-full border-2 border-white shadow-[0_0_15px_rgba(34,197,94,0.9)] animate-pulse';
+            markerRef.current = new mapboxgl.Marker(el)
+              .setLngLat([longitude, latitude])
+              .addTo(map.current);
+          } else {
+            markerRef.current.setLngLat([longitude, latitude]);
+          }
         }
 
         const { error: insertError } = await supabase.from('vehicle_positions').insert({
@@ -104,6 +117,10 @@ export default function DriverPage() {
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
+    }
+    if (markerRef.current) {
+      markerRef.current.remove();
+      markerRef.current = null;
     }
     setTracking(false);
     setActiveOrder(null);
@@ -147,7 +164,7 @@ export default function DriverPage() {
   }
 
   // ==========================================
-  // ESTADO 2: TURNO ATIVO (Mapa + Gestão de Pedidos + Fechar Serviço)
+  // ESTADO 2: TURNO ATIVO (Mapa + Ponto Verde + Pedidos)
   // ==========================================
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
@@ -179,7 +196,7 @@ export default function DriverPage() {
         )}
       </div>
 
-      {/* Fundo: Opção para Fechar o Serviço / Terminar Turno */}
+      {/* Fundo: Contadores e Fechar Serviço */}
       <div className="absolute bottom-6 inset-x-4 z-10 flex items-center justify-between bg-zinc-900/90 backdrop-blur-md border border-white/10 p-4 rounded-2xl shadow-2xl">
         <div className="flex items-center gap-2">
           <Wifi className="w-4 h-4 text-emerald-400 animate-pulse" />
