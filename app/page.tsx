@@ -192,39 +192,45 @@ export default function Dashboard() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
+<div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
           <div className="grid grid-cols-2 gap-4">
-            {vehicles.map(vehicle => (
-              <div 
-                key={vehicle.id} 
-                onClick={() => setSelectedVehicleId(vehicle.id)}
-                className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5 shadow-[0_0_15px_rgba(34,197,94,0.1)]' : 'border-white/5 hover:border-white/20'}`}
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-white text-sm font-medium tracking-tight">{vehicle.display_name || vehicle.displayName || 'Veículo'}</h3>
-                  </div>
-                  <ArrowUpRight className="text-vexto-textMuted w-4 h-4 group-hover:text-white transition-colors" />
-                </div>
+            {vehicles.map(vehicle => {
+              const isOnline = vehicle.status === 'online';
 
-                <div className="h-14 border border-white/5 rounded-lg flex items-center justify-center bg-black/20 relative overflow-hidden mt-1">
-                  <div className="border border-white/10 px-3 py-1 rounded bg-black/60 backdrop-blur-md flex items-center gap-2 z-10">
-                    <span className="text-vexto-textMuted text-[10px]">L</span>
-                    <span className="text-white text-xs tracking-widest font-medium uppercase">{vehicle.plate || 'S/N'}</span>
+              return (
+                <div 
+                  key={vehicle.id} 
+                  onClick={() => setSelectedVehicleId(vehicle.id)}
+                  className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5 shadow-[0_0_15px_rgba(34,197,94,0.1)]' : 'border-white/5 hover:border-white/20'}`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="text-white text-sm font-medium tracking-tight">{vehicle.display_name || vehicle.displayName || 'Veículo'}</h3>
+                    </div>
+                    <ArrowUpRight className="text-vexto-textMuted w-4 h-4 group-hover:text-white transition-colors" />
                   </div>
-                </div>
 
-                <div className="flex justify-between items-center text-[10px] font-medium tracking-wide">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]"></span>
-                    <span className="text-vexto-green">Online</span>
+                  <div className="h-14 border border-white/5 rounded-lg flex items-center justify-center bg-black/20 relative overflow-hidden mt-1">
+                    <div className="border border-white/10 px-3 py-1 rounded bg-black/60 backdrop-blur-md flex items-center gap-2 z-10">
+                      <span className="text-vexto-textMuted text-[10px]">L</span>
+                      <span className="text-white text-xs tracking-widest font-medium uppercase">{vehicle.plate || 'S/N'}</span>
+                    </div>
                   </div>
-                  <div className="flex gap-3 text-vexto-textMuted">
-                    <span className="flex items-center gap-1"><Wifi className="w-3 h-3" /> GPS</span>
+
+                  <div className="flex justify-between items-center text-[10px] font-medium tracking-wide">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-vexto-red shadow-[0_0_8px_rgba(239,68,68,0.8)]'}`}></span>
+                      <span className={isOnline ? 'text-vexto-green' : 'text-vexto-red'}>
+                        {isOnline ? 'Online' : 'Offline'}
+                      </span>
+                    </div>
+                    <div className="flex gap-3 text-vexto-textMuted">
+                      <span className="flex items-center gap-1"><Wifi className="w-3 h-3" /> {isOnline ? 'GPS' : '—'}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
