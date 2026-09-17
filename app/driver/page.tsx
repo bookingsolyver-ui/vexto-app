@@ -4,16 +4,21 @@ import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { supabase } from '../../lib/supabaseClient';
-import { Navigation, Package, PowerOff, Wifi, Camera, CheckCircle2, Truck } from 'lucide-react';
+import { Navigation, Package, PowerOff, Wifi, Camera, CheckCircle2, Truck, Car } from 'lucide-react';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
+// === LISTA FIXA DE VEÍCULOS PARA O TESTE ===
+const VEICULOS_TESTE = [
+  { id: 'a708d088-4dff-4a95-8475-854b76a5295a', displayName: 'Bus 6023', plate: 'L 45623', type: 'bus' },
+  { id: 'e-bus-07-teste-id', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
+  { id: 'taxi-100-teste-id', displayName: 'Taxi 100', plate: 'T 99887', type: 'car' }
+];
+
 export default function DriverPage() {
-  // === NOVOS ESTADOS PARA ESCOLHER VEÍCULO ===
-  const [veiculosDisponiveis, setVeiculosDisponiveis] = useState<any[]>([]);
+  const [veiculosDisponiveis] = useState<any[]>(VEICULOS_TESTE);
   const [meuVeiculo, setMeuVeiculo] = useState<any>(null);
 
-  // === ESTADOS NORMAIS ===
   const [tracking, setTracking] = useState(false);
   const [pendingOrder, setPendingOrder] = useState<any>(null);
   const [activeOrder, setActiveOrder] = useState<any>(null);
@@ -27,16 +32,6 @@ export default function DriverPage() {
   const markerRef = useRef<mapboxgl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  // 1. BUSCAR A LISTA DE TODOS OS VEÍCULOS NA BASE DE DADOS
-  useEffect(() => {
-    async function fetchVehicles() {
-      const { data } = await supabase.from('vehicles').select('*').order('displayName', { ascending: true });
-      if (data) setVeiculosDisponiveis(data);
-    }
-    fetchVehicles();
-  }, []);
-
-  // 2. INICIAR MAPA
   useEffect(() => {
     if (!tracking || !mapContainer.current || !meuVeiculo) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -67,7 +62,6 @@ export default function DriverPage() {
     };
   }, [tracking, meuVeiculo]);
 
-  // 3. ESCUTAR ENTREGAS
   useEffect(() => {
     async function fetchOrder() {
       const { data } = await supabase.from('deliveries').select('*').eq('status', 'pending').limit(1);
@@ -83,7 +77,6 @@ export default function DriverPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // 4. FUNÇÕES DE TRACKING (Agora usam o meuVeiculo.id dinamicamente!)
   function startTracking() {
     if (!navigator.geolocation || !meuVeiculo) return;
 
@@ -106,7 +99,7 @@ export default function DriverPage() {
           heading: heading ?? null, speed_kmh: speed ? speed * 3.6 : null,
           updated_at: new Date().toISOString(),
         });
-        await supabase.from('vehicles').update({ status: 'online', last_update: new Date().toISOString() }).eq('id', meuVeiculo.id);
+        
         setSentCount((n) => n + 1);
       },
       (err) => console.error(err),
@@ -121,9 +114,6 @@ export default function DriverPage() {
     setActiveOrder(null);
     setIsArrived(false);
     setPhotoPreview(null);
-    if (meuVeiculo) {
-      supabase.from('vehicles').update({ status: 'offline' }).eq('id', meuVeiculo.id);
-    }
   }
 
   async function fetchRoute(startLng: number, startLat: number, endLng: number, endLat: number) {
@@ -170,9 +160,6 @@ export default function DriverPage() {
     setPhotoPreview(null);
   }
 
-  // ==========================================
-  // ECRÃ 1: ESCOLHER O VEÍCULO (O TEU AMIGO VAI VER ISTO)
-  // ==========================================
   if (!meuVeiculo) {
     return (
       <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-8 font-sans gap-8">
@@ -192,8 +179,8 @@ export default function DriverPage() {
                 <div className="font-bold text-lg">{v.displayName}</div>
                 <div className="text-zinc-500 text-xs mt-1 uppercase tracking-widest">{v.plate}</div>
               </div>
-              <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center">
-                <Truck className="w-4 h-4 text-emerald-500" />
+              <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center">
+                {v.type === 'bus' ? <Truck className="w-5 h-5 text-emerald-500" /> : <Car className="w-5 h-5 text-emerald-500" />}
               </div>
             </button>
           ))}
@@ -202,9 +189,6 @@ export default function DriverPage() {
     );
   }
 
-  // ==========================================
-  // ECRÃ 2: INICIAR TURNO
-  // ==========================================
   if (!tracking) {
     return (
       <main className="min-h-screen bg-black text-white flex flex-col items-center justify-between p-8 font-sans">
@@ -221,9 +205,6 @@ export default function DriverPage() {
     );
   }
 
-  // ==========================================
-  // ECRÃ 3: MAPA E ENTREGAS (IGUAL AO QUE TINHAS)
-  // ==========================================
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
