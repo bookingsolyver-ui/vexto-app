@@ -211,11 +211,11 @@ export default function Dashboard() {
               </div>
            </div>
 
-           <div>
+<div>
               <div className="flex justify-between items-end mb-2">
                 <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Número de Horas Trabalhadas (Hoje)</span>
                 <span className="text-2xl text-functional text-white">
-                  {selectedVeh?.status === 'online' ? '06h 45m' : '05h 30m'}
+                  {selectedVeh?.status === 'online' ? '01h 15m' : '00h 00m'}
                 </span>
               </div>
               <div className="h-28 w-full relative mb-3">
