@@ -3,16 +3,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { supabase } from '../../lib/supabaseClient';
+import { supabase, LIVE_VEHICLE_ID } from '../../lib/supabaseClient';
 import { Navigation, Package, PowerOff, Wifi, Camera, CheckCircle2, Truck, Car } from 'lucide-react';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
-// === CORREÇÃO: IDs NO FORMATO UUID REAL PARA O SUPABASE ACEITAR! ===
+// === USA O TEU ID VERDADEIRO E UM NOVO PARA ANGOLA ===
 const VEICULOS_TESTE = [
-  { id: 'a708d088-4dff-4a95-8475-854b76a5295a', displayName: 'Bus 6023', plate: 'L 45623', type: 'bus' },
-  { id: '123e4567-e89b-12d3-a456-426614174000', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
-  { id: '987e6543-e21b-34d3-b890-426614174000', displayName: 'Taxi 100', plate: 'T 99887', type: 'car' }
+  { id: LIVE_VEHICLE_ID, displayName: 'Bus 6023', plate: 'L 45623', type: 'bus' },
+  { id: '11111111-2222-3333-4444-555555555555', displayName: 'E-Bus 07 (Angola)', plate: 'L 34654', type: 'bus' },
+  { id: '22222222-3333-4444-5555-666666666666', displayName: 'Taxi 100', plate: 'T 99887', type: 'car' }
 ];
 
 export default function DriverPage() {
@@ -46,7 +46,6 @@ export default function DriverPage() {
     map.current.on('load', () => {
       if (!map.current) return;
       
-      // Assim que o mapa carrega, pede logo a localização para não ficar preso em Portugal!
       navigator.geolocation.getCurrentPosition((pos) => {
         if (map.current) {
           map.current.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 15, essential: true });
@@ -98,21 +97,25 @@ export default function DriverPage() {
           } else {
             markerRef.current.setLngLat([longitude, latitude]);
           }
-          
-          // === EFEITO WAZE ===
-          // A câmara persegue o motorista automaticamente para onde quer que ele vá!
           map.current.easeTo({ center: [longitude, latitude], duration: 1000 });
         }
 
-        try {
-          await supabase.from('vehicle_positions').insert({
-            vehicle_id: meuVeiculo.id, lat: latitude, lng: longitude,
-            heading: heading ?? null, speed_kmh: speed ? speed * 3.6 : null,
-            updated_at: new Date().toISOString(),
-          });
+        // Tenta garantir que o ID existe na tabela 'vehicles' para não dar erro
+        await supabase.from('vehicles').upsert([{ id: meuVeiculo.id }], { onConflict: 'id' });
+
+        // ENVIA A POSIÇÃO E VERIFICA SE HÁ ERROS
+        const { error } = await supabase.from('vehicle_positions').insert({
+          vehicle_id: meuVeiculo.id, lat: latitude, lng: longitude,
+          heading: heading ?? null, speed_kmh: speed ? speed * 3.6 : null,
+          updated_at: new Date().toISOString(),
+        });
+
+        if (error) {
+          console.error("ERRO SUPABASE:", error);
+          alert("O Supabase rejeitou o GPS: " + error.message); // O teu amigo vai ver este erro se falhar!
+        } else {
+          // Só conta pacote se a base de dados GUARDAR com sucesso!
           setSentCount((n) => n + 1);
-        } catch (error) {
-          console.error("Erro ao enviar GPS:", error);
         }
       },
       (err) => console.error(err),
@@ -216,10 +219,11 @@ export default function DriverPage() {
     <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
 
+      {/* COMPROVATIVO DE ENTREGA E BOTÕES (IGUAL AO TEU) */}
       {isArrived && (
         <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-6 gap-6 backdrop-blur-md">
           <h2 className="text-2xl font-bold text-white">Prova de Entrega</h2>
-          <p className="text-zinc-400 text-center text-sm">Tira uma foto à encomenda ou ao local para comprovares a entrega.</p>
+          <p className="text-zinc-400 text-center text-sm">Tira uma foto à encomenda ou ao local.</p>
           {photoPreview ? (
             <img src={photoPreview} alt="Comprovativo" className="w-full max-h-[50vh] object-cover rounded-2xl border-2 border-emerald-500 shadow-2xl" />
           ) : (
@@ -239,9 +243,7 @@ export default function DriverPage() {
         <div className="absolute top-4 inset-x-4 z-10 flex flex-col gap-2">
           {pendingOrder && !activeOrder && (
             <div className="bg-zinc-900/95 backdrop-blur-md border border-amber-500/40 p-4 rounded-2xl shadow-2xl flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-amber-400 font-medium text-sm">
-                <Package className="w-5 h-5" /> Nova Entrega Disponível
-              </div>
+              <div className="flex items-center gap-2 text-amber-400 font-medium text-sm"><Package className="w-5 h-5" /> Nova Entrega Disponível</div>
               <p className="text-xs text-white/80"><b>Destino:</b> {pendingOrder.dropoff_address || 'Oeiras Parque'}</p>
               <button onClick={handleAcceptOrder} className="bg-emerald-500 text-black font-bold py-3 rounded-xl text-sm shadow-lg">ACEITAR ENTREGA</button>
             </div>
@@ -250,14 +252,10 @@ export default function DriverPage() {
           {activeOrder && (
             <div className="bg-zinc-900/95 backdrop-blur-md border border-emerald-500/40 p-4 rounded-2xl shadow-xl flex flex-col gap-3">
               <div className="flex justify-between items-center">
-                <span className="text-emerald-400 text-sm font-bold flex items-center gap-2">
-                  <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" /> Em Rota
-                </span>
+                <span className="text-emerald-400 text-sm font-bold flex items-center gap-2"><div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" /> Em Rota</span>
                 <span className="text-xs text-zinc-400">{activeOrder.dropoff_address}</span>
               </div>
-              <button onClick={() => setIsArrived(true)} className="bg-white text-black hover:bg-zinc-200 font-bold py-3 rounded-xl text-sm transition-all">
-                CHEGUEI AO DESTINO
-              </button>
+              <button onClick={() => setIsArrived(true)} className="bg-white text-black hover:bg-zinc-200 font-bold py-3 rounded-xl text-sm transition-all">CHEGUEI AO DESTINO</button>
             </div>
           )}
         </div>
