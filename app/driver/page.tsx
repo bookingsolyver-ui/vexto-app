@@ -80,8 +80,13 @@ export default function DriverPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  function startTracking() {
+async function startTracking() {
     if (!navigator.geolocation || !meuVeiculo) return;
+
+    // GARANTE QUE O VEÍCULO EXISTE NA BASE DE DADOS ANTES DE ENVIAR O GPS
+    await supabase.from('vehicles').upsert([
+      { id: meuVeiculo.id, display_name: meuVeiculo.displayName, plate: meuVeiculo.plate, status: 'online' }
+    ], { onConflict: 'id' });
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       async (pos) => {
