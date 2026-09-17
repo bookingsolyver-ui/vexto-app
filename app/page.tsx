@@ -21,7 +21,7 @@ export default function Dashboard() {
   const [livePosition, setLivePosition] = useState<LiveVehiclePosition | null>(null);
   const [activeDelivery, setActiveDelivery] = useState<any>(null);
 
-  // 1. BUSCAR TODOS OS VEÍCULOS REGISTADOS NA BASE DE DADOS EM TEMPO REAL
+// 1. BUSCAR TODOS OS VEÍCULOS E OUVIR MUDANÇAS EM TEMPO REAL (ONLINE/OFFLINE)
   useEffect(() => {
     async function fetchVehicles() {
       const { data, error } = await supabase.from('vehicles').select('*');
@@ -37,10 +37,16 @@ export default function Dashboard() {
 
     fetchVehicles();
 
-    const vehiclesChannel = supabase.channel('global-vehicles')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicles' }, () => {
-        fetchVehicles();
-      })
+    // Canal em tempo real para qualquer alteração na tabela vehicles (INSERT ou UPDATE de status)
+    const vehiclesChannel = supabase.channel('global-vehicles-status')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'vehicles' },
+        (payload) => {
+          console.log("Mudança detetada num veículo:", payload);
+          fetchVehicles(); // Recarrega imediatamente a lista ao haver alterações
+        }
+      )
       .subscribe();
 
     return () => {
