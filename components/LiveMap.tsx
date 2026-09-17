@@ -87,10 +87,11 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
     }
   }
 
- // Quando o gestor clica num veículo na barra lateral, voa com precisão para a localização exata
+// Sempre que o gestor clica num cartão (muda o selectedVehicleId), o mapa é forçado a voar para lá
   useEffect(() => {
     if (!selectedVehicleId || !map.current) return;
-    
+
+    // Vai buscar a posição mais recente deste ID exato à base de dados
     supabase
       .from('vehicle_positions')
       .select('*')
@@ -100,7 +101,15 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
       .then(({ data }) => {
         if (data && data.length > 0) {
           const { lat, lng } = data[0];
-          map.current?.flyTo({ center: [lng, lat], zoom: 14, essential: true, speed: 1.4 });
+          console.log("A voar para:", lat, lng);
+          map.current?.flyTo({
+            center: [lng, lat],
+            zoom: 14,
+            essential: true,
+            speed: 1.5
+          });
+        } else {
+          console.warn("Nenhuma posição encontrada para o veículo:", selectedVehicleId);
         }
       });
   }, [selectedVehicleId]);
