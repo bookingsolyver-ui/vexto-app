@@ -42,27 +42,29 @@ export default function Dashboard() {
     stopLiveUpdates,
   } = useFleetStore();
 
+// ESCUTA DINÂMICA: Muda automaticamente consoante o veículo que o gestor clicar
   useEffect(() => {
-    loadInitialData().then(() => startLiveUpdates(3000));
-    return () => stopLiveUpdates();
-  }, []);
+    if (!selectedVehicleId) return;
 
-  useEffect(() => {
     supabase
       .from('vehicle_positions')
       .select('*')
-      .eq('vehicle_id', LIVE_VEHICLE_ID)
+      .eq('vehicle_id', selectedVehicleId)
       .order('updated_at', { ascending: false })
       .limit(1)
       .then(({ data }) => {
-        if (data && data.length > 0) setLivePosition(data[0] as LiveVehiclePosition);
+        if (data && data.length > 0) {
+          setLivePosition(data[0] as LiveVehiclePosition);
+        } else {
+          setLivePosition(null);
+        }
       });
 
     const channel = supabase
-      .channel('vehicle-positions-changes')
+      .channel(`dynamic-pos-${selectedVehicleId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${LIVE_VEHICLE_ID}` },
+        { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${selectedVehicleId}` },
         (payload) => {
           setLivePosition(payload.new as any);
         }
@@ -70,7 +72,7 @@ export default function Dashboard() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [selectedVehicleId]);
 
   // NOVA LÓGICA: Escutar as entregas do veículo que o Gestor clicou
   useEffect(() => {
