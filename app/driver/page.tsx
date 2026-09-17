@@ -21,7 +21,7 @@ export default function DriverPage() {
   const markerRef = useRef<mapboxgl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  // Inicializar o mapa
+  // 1. Inicializar o Mapa e preparar a camada da rota vazia
   useEffect(() => {
     if (!tracking || !mapContainer.current) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -33,6 +33,30 @@ export default function DriverPage() {
       zoom: 15,
     });
 
+    map.current.on('load', () => {
+      if (!map.current) return;
+
+      // Adicionar source e layer da rota vazios para estarem prontos a receber dados
+      if (!map.current.getSource('route')) {
+        map.current.addSource('route', {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'LineString', coordinates: [] }
+          }
+        });
+
+        map.current.addLayer({
+          id: 'route-line',
+          type: 'line',
+          source: 'route',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#ffffff', 'line-width': 6, 'line-opacity': 0.95 }
+        });
+      }
+    });
+
     return () => {
       if (markerRef.current) markerRef.current.remove();
       map.current?.remove();
@@ -40,7 +64,7 @@ export default function DriverPage() {
     };
   }, [tracking]);
 
-  // Escutar encomendas pendentes
+  // 2. Escutar encomendas pendentes
   useEffect(() => {
     async function fetchOrder() {
       const { data } = await supabase
@@ -62,7 +86,7 @@ export default function DriverPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // Iniciar Turno e GPS
+  // 3. Iniciar Turno e GPS
   function startTracking() {
     if (!navigator.geolocation) {
       setError('Geolocalização não suportada.');
@@ -74,8 +98,6 @@ export default function DriverPage() {
         const { latitude, longitude, heading, speed } = pos.coords;
 
         if (map.current) {
-          map.current.flyTo({ center: [longitude, latitude], zoom: 15 });
-
           // Atualizar o ponto verde do motorista
           if (!markerRef.current) {
             const el = document.createElement('div');
@@ -111,7 +133,7 @@ export default function DriverPage() {
     setTracking(true);
   }
 
-  // Terminar Turno
+  // 4. Terminar Turno
   function stopTracking() {
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
@@ -126,7 +148,7 @@ export default function DriverPage() {
     supabase.from('vehicles').update({ status: 'offline' }).eq('id', MEU_VEICULO_ID);
   }
 
-  // Aceitar Encomenda e Desenhar Linha de Rota Branca
+  // 5. Aceitar Encomenda e Desenhar Rota Instantaneamente
   async function handleAcceptOrder() {
     if (!pendingOrder) return;
     
@@ -142,31 +164,31 @@ export default function DriverPage() {
     if (map.current && markerRef.current) {
       const driverPos = markerRef.current.getLngLat();
       
-      // Coordenadas da rota (da posição atual do motorista até ao destino)
+      // Coordenadas de destino (podes ajustar para usar colunas reais da BD se existirem, ex: pendingOrder.dropoff_lng)
+      const dropoffLng = pendingOrder.dropoff_lng || -9.2000;
+      const dropoffLat = pendingOrder.dropoff_lat || 38.7100;
+
       const routeGeoJSON: any = {
         type: 'Feature',
         properties: {},
         geometry: {
           type: 'LineString',
           coordinates: [
-            [driverPos.lng, driverPos.lat], // Ponto atual do motorista
-            [-9.2900, 38.7000],             // Ponto intermédio otimizado
-            [-9.3000, 38.7070]              // Destino aproximado (Oeiras Parque)
+            [driverPos.lng, driverPos.lat], // Posição atual do motorista
+            [dropoffLng, dropoffLat]         // Destino da entrega
           ]
         }
       };
 
-      if (map.current.getSource('route')) {
-        (map.current.getSource('route') as mapboxgl.GeoJSONSource).setData(routeGeoJSON);
-      } else {
-        map.current.addSource('route', { type: 'geojson', data: routeGeoJSON });
-        map.current.addLayer({
-          id: 'route-line',
-          type: 'line',
-          source: 'route',
-          layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 'line-color': '#ffffff', 'line-width': 6, 'line-opacity': 0.95 }
-        });
+      const source = map.current.getSource('route') as mapboxgl.GeoJSONSource;
+      if (source) {
+        source.setData(routeGeoJSON);
+        
+        // Fazer zoom automático para abranger o motorista e o destino
+        const bounds = new mapboxgl.LngLatBounds();
+        bounds.extend([driverPos.lng, driverPos.lat]);
+        bounds.extend([dropoffLng, dropoffLat]);
+        map.current.fitBounds(bounds, { padding: 80, maxZoom: 15 });
       }
     }
   }
