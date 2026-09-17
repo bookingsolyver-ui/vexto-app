@@ -19,8 +19,15 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
   const positionsRef = useRef<{ [key: string]: any }>({});
   const activePopup = useRef<mapboxgl.Popup | null>(null);
 
+  const selectedVehicleRef = useRef(selectedVehicleId);
+  useEffect(() => {
+    selectedVehicleRef.current = selectedVehicleId;
+  }, [selectedVehicleId]);
+
   useEffect(() => {
     if (!mapContainer.current) return;
+    if (map.current) return; // Evita criar dois mapas se o React fizer re-render duplo
+
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
     map.current = new mapboxgl.Map({
@@ -51,15 +58,32 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
     }
     fetchInitialPositions();
 
-    const channel = supabase.channel('manager-tracking')
+    const trackingChannel = supabase.channel('manager-tracking')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_positions' }, (payload) => {
          updateMarker(payload.new);
       })
       .subscribe();
 
+    const deliveriesChannel = supabase.channel('manager-deliveries-updates')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'deliveries' }, (payload) => {
+         const delivery = payload.new;
+         if (delivery.status === 'completed' || delivery.status === 'cancelled') {
+           if (map.current) {
+             const source = map.current.getSource('manager-route') as mapboxgl.GeoJSONSource;
+             if (source) source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } as any);
+           }
+           if (selectedVehicleRef.current === delivery.driver_id) {
+             showVehicleData(delivery.driver_id);
+           }
+         }
+      })
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(trackingChannel);
+      supabase.removeChannel(deliveriesChannel);
       map.current?.remove();
+      map.current = null;
     };
   }, []);
 
@@ -74,12 +98,10 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
     } catch (e) { console.error("Erro na rota do gestor", e); }
   }
 
-  // Função central que voa para o veículo, abre info e desenha rota
   async function showVehicleData(vehicle_id: string) {
     const pos = positionsRef.current[vehicle_id];
     if (!pos || !map.current) return;
 
-    // Voa suavemente para o motorista clicado
     map.current.flyTo({ center: [pos.lng, pos.lat], zoom: 14, speed: 1.2 });
 
     if (activePopup.current) activePopup.current.remove();
@@ -108,45 +130,51 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
       drawRouteOnManager(pos.lng, pos.lat, delivery.dropoff_lng || -9.3000, delivery.dropoff_lat || 38.7070);
     } else {
       html += `<div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #e4e4e7;"><p style="margin: 0; font-size: 13px; color: #ca8a04; font-weight: bold;">🟡 Livre / Aguarda</p></div>`;
-      // Limpar linha APENAS se este veículo não tiver entrega
       const source = map.current.getSource('manager-route') as mapboxgl.GeoJSONSource;
       if (source) source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } as any);
     }
     html += `</div>`;
 
-    // Anchor 'bottom' e offset garantem que o popup abre PARA CIMA do ponto, não tapando a linha
-    const popup = new mapboxgl.Popup({ closeButton: true, closeOnClick: false, anchor: 'bottom', offset: [0, -15] })
+    // Offset ajustado para garantir que não tapa o ponto verde
+    const popup = new mapboxgl.Popup({ closeButton: true, closeOnClick: false, anchor: 'bottom', offset: [0, -20] })
       .setLngLat([pos.lng, pos.lat])
       .setHTML(html)
       .addTo(map.current!);
       
     activePopup.current = popup;
-    // NOTA: Removida a ação que apagava a linha ao fechar o X. A linha agora fica fixa!
   }
 
   function updateMarker(position: any) {
     if (!map.current) return;
     const { vehicle_id, lat, lng } = position;
     
-    // Guardar a posição na memória para o clique da barra lateral conseguir encontrar
     positionsRef.current[vehicle_id] = position;
 
     if (!markersRef.current[vehicle_id]) {
-      const el = document.createElement('div');
-      el.className = 'w-4 h-4 bg-emerald-500 rounded-full border-2 border-black shadow-[0_0_10px_rgba(34,197,94,0.8)] cursor-pointer hover:scale-125 transition-transform';
       
-      const marker = new mapboxgl.Marker(el).setLngLat([lng, lat]).addTo(map.current);
+      // 1. O contentor invisível para a Mapbox controlar (resolve o bug do ponto desaparecer)
+      const container = document.createElement('div');
+      container.className = 'flex items-center justify-center w-8 h-8 cursor-pointer'; 
+      
+      // 2. A bolinha visual que tem a animação do Tailwind
+      const dot = document.createElement('div');
+      dot.className = 'w-4 h-4 bg-emerald-500 rounded-full border-2 border-black shadow-[0_0_10px_rgba(34,197,94,0.8)] transition-transform duration-200 hover:scale-150';
+      
+      container.appendChild(dot);
+      
+      const marker = new mapboxgl.Marker(container).setLngLat([lng, lat]).addTo(map.current);
       markersRef.current[vehicle_id] = marker;
 
-      el.addEventListener('click', () => {
-        onSelectVehicle(vehicle_id); // Diz ao painel quem foi clicado
+      // Adicionamos stopPropagation para o clique não "fugir" para o mapa de fundo
+      container.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onSelectVehicle(vehicle_id);
       });
     } else {
       markersRef.current[vehicle_id].setLngLat([lng, lat]);
     }
   }
 
-  // Quando o Painel Lateral muda o veículo selecionado, o mapa reage
   useEffect(() => {
     if (selectedVehicleId && positionsRef.current[selectedVehicleId]) {
       showVehicleData(selectedVehicleId);
