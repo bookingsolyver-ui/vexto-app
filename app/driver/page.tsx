@@ -10,7 +10,7 @@ const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
 const VEICULOS_TESTE = [
   { id: LIVE_VEHICLE_ID, displayName: 'Bus 6023', plate: 'L 45623', type: 'bus' },
-  { id: '2bee1ec2-380f-4fe2-9eb7-03ef2c5f9ef9', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
+  { id: '2bee1ec2-380f-4fe2-9eb7-03ef2c5f9ef9e0e', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
   { id: 'b2b03f55-4fab-4bc8-b8f7-517563ec8000', displayName: 'Taxi 100', plate: 'T 99887', type: 'car' }
 ];
 
