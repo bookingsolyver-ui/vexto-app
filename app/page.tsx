@@ -1,8 +1,8 @@
 "use client";
 
 import LiveMap from '../components/LiveMap';
-import React, { useEffect, useRef, useState } from 'react';
-import { Wifi, ArrowUpRight, Navigation, AlertTriangle, AlertCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Wifi, ArrowUpRight, Navigation } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { useFleetStore } from '../store/useFleetStore';
 import { supabase, LIVE_VEHICLE_ID, LiveVehiclePosition } from '../lib/supabaseClient';
@@ -18,19 +18,11 @@ const fallbackPassengerData = [
 
 export default function Dashboard() {
   const [livePosition, setLivePosition] = useState<LiveVehiclePosition | null>(null);
-  
-  // ESTADO QUE CONTROLA O VEÍCULO SELECIONADO (Barra Lateral <-> Mapa)
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(LIVE_VEHICLE_ID);
+  
+  const [activeDelivery, setActiveDelivery] = useState<any>(null);
 
-  const {
-    vehicles,
-    overview,
-    passengerVolume,
-    efficiency,
-    loadInitialData,
-    startLiveUpdates,
-    stopLiveUpdates,
-  } = useFleetStore();
+  const { vehicles, overview, passengerVolume, efficiency, loadInitialData, startLiveUpdates, stopLiveUpdates } = useFleetStore();
 
   useEffect(() => {
     loadInitialData().then(() => startLiveUpdates(3000));
@@ -38,48 +30,54 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    supabase
-      .from('vehicle_positions')
-      .select('*')
-      .eq('vehicle_id', LIVE_VEHICLE_ID)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .then(({ data }) => {
-        if (data && data.length > 0) setLivePosition(data[0] as LiveVehiclePosition);
-      });
-
-    const channel = supabase
-      .channel('vehicle-positions-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${LIVE_VEHICLE_ID}` },
-        (payload) => {
-          setLivePosition(payload.new as any);
-        }
-      )
-      .subscribe();
-
+    const channel = supabase.channel('vehicle-positions-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${LIVE_VEHICLE_ID}` }, (payload: any) => {
+          setLivePosition(payload.new);
+      }).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
+
+  useEffect(() => {
+    if (!selectedVehicleId) {
+      setActiveDelivery(null);
+      return;
+    }
+
+    const fetchDelivery = async () => {
+      const { data } = await supabase.from('deliveries').select('*').eq('driver_id', selectedVehicleId).eq('status', 'in_progress').single();
+      setActiveDelivery(data || null);
+    };
+    fetchDelivery();
+
+    // ERRO CORRIGIDO AQUI -> (payload: any)
+    const deliveriesChannel = supabase.channel(`deliveries-${selectedVehicleId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries', filter: `driver_id=eq.${selectedVehicleId}` }, (payload: any) => {
+         if (payload.new.status === 'completed' || payload.new.status === 'cancelled') {
+           setActiveDelivery(null);
+         } else if (payload.new.status === 'in_progress') {
+           setActiveDelivery(payload.new);
+         }
+      }).subscribe();
+
+    return () => { supabase.removeChannel(deliveriesChannel); };
+  }, [selectedVehicleId]);
 
   const onlineCount = overview?.onlineCount ?? 12;
   const offlineCount = overview?.offlineCount ?? 4;
   const passengerToday = passengerVolume?.todayTotal ?? 142580;
   const chartData = passengerVolume?.series ?? fallbackPassengerData;
-
   const isLiveGpsActive = livePosition && Date.now() - new Date(livePosition.updated_at).getTime() < 15000;
+
+  const selectedVeh = vehicles.find(v => v.id === selectedVehicleId) || vehicles[0];
 
   return (
     <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg">
 
-      {/* O MAPA INTERATIVO NO FUNDO */}
       <div className="absolute inset-0 z-0">
-        {/* MAPA LIGADO AO ESTADO DE SELEÇÃO */}
         <LiveMap selectedVehicleId={selectedVehicleId} onSelectVehicle={setSelectedVehicleId} />
         <div className="absolute inset-0 bg-vexto-bg/40 pointer-events-none"></div>
       </div>
 
-      {/* MENU SUPERIOR FLUTUANTE */}
       <div className="absolute top-8 left-112.5 z-20 flex flex-col gap-2">
         <div className="glass-panel px-8 py-3 rounded-full flex items-center gap-8 border border-white/5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
           <div className="flex items-center gap-2 cursor-pointer">
@@ -93,18 +91,9 @@ export default function Dashboard() {
           <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Maintenance</span>
           <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Incidents</span>
         </div>
-
-        {isLiveGpsActive && (
-          <div className="glass-panel px-4 py-1.5 rounded-full flex w-fit items-center gap-2 border border-vexto-green/30">
-            <span className="w-1.5 h-1.5 rounded-full bg-vexto-green animate-pulse"></span>
-            <span className="text-vexto-green text-xs font-medium tracking-wide">GPS REAL AO VIVO</span>
-          </div>
-        )}
       </div>
 
-      {/* NOVA BARRA LATERAL (COMMAND CENTER) */}
       <div className="glass-panel w-105 h-full rounded-none relative z-10 flex flex-col bg-vexto-bg/80 backdrop-blur-xl border-y-0 border-l-0 border-r border-white/5 overflow-hidden">
-        
         <header className="p-8 pb-6 shrink-0">
           <div className="flex items-center gap-3 mb-8">
             <div className="flex gap-0.5 transform -rotate-45">
@@ -114,13 +103,6 @@ export default function Dashboard() {
               <div className="w-1 h-3 bg-white rounded-full -mt-0.5"></div>
             </div>
             <h1 className="text-2xl font-medium tracking-tight text-white">Vexto</h1>
-          </div>
-
-          <div className="grid grid-cols-4 gap-2 mb-8">
-            <button className="glass-panel px-3 py-2 rounded-full border border-white/10 text-white text-xs font-medium hover:bg-white/5 transition-colors cursor-pointer">24 Bus</button>
-            <button className="glass-panel px-3 py-2 rounded-full border border-transparent text-vexto-textMuted text-xs font-medium hover:text-white transition-colors cursor-pointer">100 Taxi</button>
-            <button className="glass-panel px-3 py-2 rounded-full border border-transparent text-vexto-textMuted text-xs font-medium hover:text-white transition-colors cursor-pointer">12 Trains</button>
-            <button className="glass-panel px-3 py-2 rounded-full border border-transparent text-vexto-textMuted text-xs font-medium hover:text-white transition-colors cursor-pointer">13 Trams</button>
           </div>
 
           <div className="flex gap-4 mb-8">
@@ -139,196 +121,95 @@ export default function Dashboard() {
               <span className="text-2xl text-functional text-white mt-1">{offlineCount}</span>
             </div>
           </div>
-
-          <div className="flex flex-col gap-2 mb-2">
-            <div className="flex justify-between items-end">
-              <span className="text-vexto-textMuted text-xs">Operational Efficiency</span>
-              <ArrowUpRight className="text-vexto-textMuted w-4 h-4 cursor-pointer hover:text-white" />
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-4xl text-functional text-white">{efficiency ? efficiency.operationalEfficiencyPct : '78.3'}</span>
-              <span className="text-vexto-textMuted text-sm">%</span>
-            </div>
-            <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest mt-1">Target 80%</span>
-          </div>
         </header>
 
-        {/* LISTA DE VEÍCULOS (CLICÁVEL) */}
         <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
           <div className="grid grid-cols-2 gap-4">
             {vehicles.map(vehicle => (
-              
-              <div 
-                key={vehicle.id} 
-                onClick={() => setSelectedVehicleId(vehicle.id)}
-                className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5' : 'border-white/5 hover:border-white/20'}`}
-              >
-                
+              <div key={vehicle.id} onClick={() => setSelectedVehicleId(vehicle.id)} className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5 shadow-[0_0_15px_rgba(34,197,94,0.1)]' : 'border-white/5 hover:border-white/20'}`}>
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="text-white text-sm font-medium tracking-tight">{vehicle.displayName}</h3>
-                    <p className="text-vexto-textMuted text-[10px] mt-0.5 opacity-60">
-                      {new Date(vehicle.lastUpdate).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
-                    </p>
                   </div>
                   <ArrowUpRight className="text-vexto-textMuted w-4 h-4 group-hover:text-white transition-colors" />
                 </div>
-
-                <div className="h-14 border border-white/5 rounded-lg flex items-center justify-center bg-black/20 relative overflow-hidden mt-1">
-                  <div className="border border-white/10 px-3 py-1 rounded bg-black/60 backdrop-blur-md flex items-center gap-2 z-10">
-                    <span className="text-vexto-textMuted text-[10px]">L</span>
-                    <span className="text-white text-xs tracking-widest font-medium uppercase">{vehicle.plate}</span>
-                  </div>
-                  <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_49%,rgba(255,255,255,0.03)_50%,transparent_51%)]" style={{ backgroundSize: '10px 100%' }}></div>
-                  <div className="absolute inset-0 bg-linear-to-b from-transparent to-black/80"></div>
-                </div>
-
-                <div className="flex justify-between items-center text-[10px] font-medium tracking-wide">
+                <div className="flex justify-between items-center text-[10px] font-medium tracking-wide mt-2">
                   <div className="flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${vehicle.status === 'online' ? 'bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-vexto-red shadow-[0_0_8px_rgba(239,68,68,0.8)]'}`}></span>
-                    <span className={vehicle.status === 'online' ? 'text-vexto-green' : 'text-vexto-red'}>
-                      {vehicle.status === 'online' ? 'Online' : 'Offline'}
-                    </span>
-                  </div>
-                  <div className="flex gap-3 text-vexto-textMuted">
-                    <span className="flex items-center gap-1"><Wifi className="w-3 h-3" /> {vehicle.signals?.gps ? 'GPS' : '—'}</span>
-                    <span className="flex items-center gap-1"><Navigation className="w-3 h-3" /> {vehicle.signals?.lte ? 'LTE' : '—'}</span>
+                    <span className={`w-1.5 h-1.5 rounded-full ${vehicle.status === 'online' ? 'bg-vexto-green' : 'bg-vexto-red'}`}></span>
+                    <span className={vehicle.status === 'online' ? 'text-vexto-green' : 'text-vexto-red'}>{vehicle.status === 'online' ? 'Online' : 'Offline'}</span>
                   </div>
                 </div>
-
-                <div className="mt-1 h-24 rounded-lg bg-[#050505] border border-white/5 relative overflow-hidden flex flex-col justify-end p-2.5">
-                  <svg className="absolute inset-0 w-full h-full opacity-30" preserveAspectRatio="none" viewBox="0 0 100 100">
-                    <path d="M -10,90 L 30,50 L 50,70 L 80,20 L 110,30" fill="none" stroke="#ffffff" strokeWidth="1" strokeDasharray="2,2" />
-                  </svg>
-                  {vehicle.status === 'online' && (
-                    <div className="absolute top-[45%] left-[45%] w-2 h-2 bg-white rounded-full border border-black shadow-[0_0_10px_rgba(255,255,255,1)]">
-                      <div className="absolute -inset-2 border border-white/30 rounded-full animate-ping"></div>
-                    </div>
-                  )}
-
-                  <div className="relative z-10 w-full mt-auto">
-                    <div className="flex justify-between text-[8px] text-vexto-textMuted mb-1.5 uppercase tracking-wider">
-                      <span>06AM</span>
-                      <span>11PM</span>
-                    </div>
-                    <div className="w-full h-2 relative flex items-center">
-                      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.1)_1px,transparent_1px)]" style={{ backgroundSize: '3px 100%' }}></div>
-                      <div className="absolute left-0 h-full bg-[linear-gradient(90deg,rgba(255,255,255,0.4)_1px,transparent_1px)]" style={{ backgroundSize: '3px 100%', width: `${Math.max(10, vehicle.passengerLoadPct)}%` }}></div>
-                      
-                      <div className="absolute z-20 bg-black border border-white/20 rounded p-0.5 shadow-lg transform -translate-y-1/2" style={{ left: `calc(${Math.max(10, vehicle.passengerLoadPct)}% - 8px)` }}>
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="4" y="11" width="16" height="2"></rect><path d="M8 20v2"></path><path d="M16 20v2"></path><circle cx="8" cy="15" r="1"></circle><circle cx="16" cy="15" r="1"></circle></svg>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* WIDGET DE CONTROLOS DO MAPA */}
-      <div className="absolute bottom-8 left-112.5 z-20 glass-panel px-5 py-2.5 rounded-full flex items-center gap-5 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] pointer-events-auto">
-        <button className="text-vexto-textMuted hover:text-white transition-colors cursor-pointer">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></svg>
-        </button>
-        <div className="w-px h-4 bg-white/10"></div>
-        <button className="text-white transition-colors cursor-pointer">
-          <div className="flex gap-0.5 transform -rotate-45">
-            <div className="w-0.5 h-3 bg-white rounded-full"></div>
-            <div className="w-0.5 h-4 bg-white rounded-full -mt-0.5"></div>
-            <div className="w-0.5 h-3 bg-white rounded-full -mt-1"></div>
-            <div className="w-0.5 h-2 bg-white rounded-full -mt-0.5"></div>
-          </div>
-        </button>
-        <div className="w-px h-4 bg-white/10"></div>
-        <button className="text-vexto-textMuted hover:text-white transition-colors cursor-pointer">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-        </button>
-      </div>
-
-      {/* PAINÉIS INFERIORES DIREITOS */}
       <div className="absolute bottom-8 right-8 z-20 flex items-end gap-6 pointer-events-none">
-
-        {/* Schedule Offset */}
-        <div className="glass-panel w-105 p-6 pointer-events-auto flex flex-col gap-5 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
-          <div className="flex justify-between items-start">
-             <div>
-               <h3 className="text-white text-sm font-medium tracking-tight">Schedule Offset</h3>
-               <div className="flex items-baseline gap-2 mt-1">
-                 <span className="text-2xl text-functional text-white">± 2.5 min</span>
-                 <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Average Variance</span>
-               </div>
-             </div>
-             <div className="flex gap-2">
-               <button className="w-8 h-8 rounded-full border border-white/10 flex items-center justify-center text-vexto-textMuted hover:text-white hover:bg-white/5 transition-colors cursor-pointer">+</button>
-               <button className="w-8 h-8 rounded-full border border-white/10 flex items-center justify-center text-vexto-textMuted hover:text-white hover:bg-white/5 transition-colors cursor-pointer">-</button>
-             </div>
-          </div>
-
-          <div className="flex flex-col gap-4">
-            <div className="flex justify-between text-[9px] text-vexto-textMuted uppercase tracking-[0.2em]">
-              <span className="w-16">Route number</span>
-              <span>L1</span>
-              <span>L12</span>
-              <span>L14</span>
-              <span>L24</span>
-            </div>
-            
-            <div className="flex justify-between items-center text-xs border-t border-white/5 pt-3">
-              <span className="text-vexto-textMuted w-16 tracking-widest text-[10px]">L 45623</span>
-              <span className="text-white">-2min</span>
-              <span className="text-vexto-orange">+3min</span>
-              <span className="text-vexto-orange">+1.5min</span>
-              <span className="text-white">-1min</span>
-            </div>
-            
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-vexto-textMuted w-16 tracking-widest text-[10px]">L 34654</span>
-              <span className="text-white">-1min</span>
-              <span className="text-white">-2min</span>
-              <span className="text-vexto-orange">+2min</span>
-              <span className="text-vexto-orange">+2min</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Live Passenger Volume */}
-        <div className="glass-panel w-120 p-6 pointer-events-auto border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
-           <div className="flex justify-between items-start mb-6">
+        
+        {/* PAINEL DINÂMICO (Substitui o Live Passenger Volume) */}
+        <div className="glass-panel w-120 p-6 pointer-events-auto border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col justify-between bg-black/60 backdrop-blur-xl">
+           
+           <div className="flex justify-between items-start mb-5">
               <div>
-                 <h3 className="text-white text-sm font-medium tracking-tight">Live Passenger Volume</h3>
-                 <div className="flex items-baseline gap-2 mt-1">
-                   <span className="text-5xl text-functional text-white">{passengerToday.toLocaleString('en-US')}</span>
-                   <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest pb-1">today</span>
+                 <h3 className="text-white text-sm font-medium tracking-tight">
+                   Análise: {selectedVeh?.displayName || 'Frota'}
+                 </h3>
+                 
+                 <div className="flex items-center gap-2 mt-2">
+                   {activeDelivery ? (
+                     <div className="px-2 py-1 bg-vexto-green/10 border border-vexto-green/30 rounded text-vexto-green text-[10px] uppercase tracking-widest font-bold flex items-center gap-2">
+                       <span className="w-1.5 h-1.5 rounded-full bg-vexto-green animate-pulse"></span>
+                       Serviço em Curso
+                     </div>
+                   ) : (
+                     <div className="px-2 py-1 bg-amber-500/10 border border-amber-500/30 rounded text-amber-500 text-[10px] uppercase tracking-widest font-bold flex items-center gap-2">
+                       <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                       Livre / Patrulha
+                     </div>
+                   )}
                  </div>
               </div>
               <ArrowUpRight className="text-vexto-textMuted w-5 h-5 hover:text-white cursor-pointer transition-colors" />
            </div>
 
-           <div className="h-28 w-full relative mb-3 mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={chartData}>
-                   <Line type="monotone" dataKey="value" stroke="#ffffff" strokeWidth={1.5} dot={{ r: 2, fill: '#ffffff', strokeWidth: 0 }} activeDot={{ r: 4, fill: '#ffffff' }} />
-                 </LineChart>
-              </ResponsiveContainer>
+           {activeDelivery && (
+             <div className="mb-5 bg-black/40 border border-white/5 rounded-xl p-3 flex flex-col gap-1">
+               <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Destino Atual</span>
+               <span className="text-white text-xs leading-relaxed">{activeDelivery.dropoff_address}</span>
+             </div>
+           )}
+
+           <div>
+              <div className="flex justify-between items-end mb-2">
+                <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">
+                  {activeDelivery ? 'Atividade Operacional (24h)' : 'Volume de Passageiros (Hoje)'}
+                </span>
+                <span className="text-white text-xl font-light">
+                  {activeDelivery ? '82%' : passengerToday.toLocaleString('en-US')}
+                </span>
+              </div>
+
+              <div className="h-24 w-full relative mb-3">
+                 <ResponsiveContainer width="100%" height="100%">
+                   <LineChart data={chartData}>
+                     <Line 
+                       type="monotone" 
+                       dataKey="value" 
+                       stroke={activeDelivery ? '#22c55e' : '#ffffff'} 
+                       strokeWidth={2} 
+                       dot={{ r: 2, fill: activeDelivery ? '#22c55e' : '#ffffff', strokeWidth: 0 }} 
+                       activeDot={{ r: 4, fill: '#ffffff' }} 
+                     />
+                   </LineChart>
+                 </ResponsiveContainer>
+              </div>
               
-              <div className="absolute top-2 left-6 px-1.5 py-0.5 bg-black/60 border border-white/10 rounded flex gap-1 items-center text-[9px] text-white backdrop-blur-md">
-                <span className="text-vexto-textMuted">55k</span> -0%
+              <div className="flex justify-between text-[9px] text-vexto-textMuted tracking-widest uppercase border-t border-white/5 pt-3">
+                 {chartData.map((point) => (
+                   <span key={point.time}>{point.time}</span>
+                 ))}
               </div>
-              <div className="absolute top-10 left-[38%] px-1.5 py-0.5 bg-vexto-orange/10 border border-vexto-orange/30 rounded flex gap-1 items-center text-[9px] text-vexto-orange backdrop-blur-md shadow-[0_0_10px_rgba(249,115,22,0.1)]">
-                <span className="text-vexto-textMuted">56k</span> +6%
-              </div>
-              <div className="absolute top-16 right-12 px-1.5 py-0.5 bg-vexto-green/10 border border-vexto-green/30 rounded flex gap-1 items-center text-[9px] text-vexto-green backdrop-blur-md shadow-[0_0_10px_rgba(34,197,94,0.1)]">
-                <span className="text-vexto-textMuted">52k</span> -12%
-              </div>
-           </div>
-           
-           <div className="flex justify-between text-[9px] text-vexto-textMuted tracking-widest uppercase border-t border-white/5 pt-3">
-              {chartData.map((point) => (
-                <span key={point.time}>{point.time}</span>
-              ))}
            </div>
         </div>
       </div>
