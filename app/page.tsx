@@ -128,8 +128,9 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(deliveriesChannel); };
   }, [selectedVehicleId]);
 
-  const onlineCount = vehicles.length || 2;
-  const offlineCount = 0;
+// Contadores dinâmicos baseados no status real da base de dados
+  const onlineCount = vehicles.filter(v => v.status === 'online').length;
+  const offlineCount = vehicles.filter(v => v.status === 'offline').length;
   const passengerToday = 142580;
   const chartData = fallbackPassengerData;
 
