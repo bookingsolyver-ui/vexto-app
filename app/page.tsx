@@ -99,8 +99,8 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(deliveriesChannel); };
   }, [selectedVehicleId]);
 
-  const onlineCount = overview?.onlineCount ?? 12;
-  const offlineCount = overview?.offlineCount ?? 4;
+  const onlineCount = 2; // Força a mostrar apenas os 2 veículos de teste ativos
+  const offlineCount = overview?.offlineCount ?? 1;
   const passengerToday = passengerVolume?.todayTotal ?? 142580;
   const chartData = passengerVolume?.series ?? fallbackPassengerData;
 

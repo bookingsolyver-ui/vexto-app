@@ -87,7 +87,7 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
     }
   }
 
-  // Se o gestor clicar num veículo na barra lateral, voa para ele
+ // Quando o gestor clica num veículo na barra lateral, voa com precisão para a localização exata
   useEffect(() => {
     if (!selectedVehicleId || !map.current) return;
     
@@ -100,7 +100,7 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
       .then(({ data }) => {
         if (data && data.length > 0) {
           const { lat, lng } = data[0];
-          map.current?.flyTo({ center: [lng, lat], zoom: 12, speed: 1.5 });
+          map.current?.flyTo({ center: [lng, lat], zoom: 14, essential: true, speed: 1.4 });
         }
       });
   }, [selectedVehicleId]);
