@@ -16,16 +16,9 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<{ [key: string]: mapboxgl.Marker }>({});
-  const positionsRef = useRef<{ [key: string]: any }>({});
-
-  const selectedVehicleRef = useRef(selectedVehicleId);
-  useEffect(() => {
-    selectedVehicleRef.current = selectedVehicleId;
-  }, [selectedVehicleId]);
 
   useEffect(() => {
-    if (!mapContainer.current) return;
-    if (map.current) return;
+    if (!mapContainer.current || map.current) return;
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
@@ -33,105 +26,53 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [-9.3235, 38.6826],
-      zoom: 13,
+      zoom: 12,
     });
 
-    map.current.on('load', () => {
-      if (!map.current) return;
-      map.current.addSource('manager-route', {
-        type: 'geojson',
-        data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } }
-      });
-      map.current.addLayer({
-        id: 'manager-route-line',
-        type: 'line',
-        source: 'manager-route',
-        layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#22c55e', 'line-width': 5, 'line-opacity': 0.9 }
-      });
-    });
+    // FUNÇÃO PARA BUSCAR TUDO O QUE ESTÁ NA BASE DE DADOS AGORA MESMO
+    async function forceFetchAllPositions() {
+      const { data, error } = await supabase.from('vehicle_positions').select('*');
+      
+      if (error) {
+        console.error("ERRO AO LER SUPABASE NO MAPA:", error.message);
+        return;
+      }
 
-    // Escuta novas posições em tempo real
-    const trackingChannel = supabase.channel('manager-tracking')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_positions' }, (payload) => {
-         updateMarker(payload.new);
-         
-         // NOVO: Se o mapa estiver focado neste veículo e ele se mexer, a câmara vai segui-lo suavemente!
-         if (selectedVehicleRef.current === payload.new.vehicle_id && map.current) {
-            map.current.easeTo({ center: [payload.new.lng, payload.new.lat], duration: 1000 });
-         }
-      })
-      .subscribe();
+      if (data && data.length > 0) {
+        console.log("POSIÇÕES ENCONTRADAS NA BD:", data);
+        data.forEach((pos: any) => {
+          updateMarker(pos);
+        });
+      } else {
+        console.warn("A tabela vehicle_positions está vazia ou inacessível!");
+      }
+    }
 
-    const deliveriesChannel = supabase.channel('manager-deliveries-updates')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'deliveries' }, (payload) => {
-         const delivery = payload.new;
-         if (delivery.status === 'completed' || delivery.status === 'cancelled') {
-           if (map.current) {
-             const source = map.current.getSource('manager-route') as mapboxgl.GeoJSONSource;
-             if (source) source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } as any);
-           }
-         }
-      })
-      .subscribe();
+    forceFetchAllPositions();
+
+    // INTERVALO DE SEGURANÇA: Atualiza o mapa a cada 3 segundos indo buscar diretamente à BD
+    const interval = setInterval(() => {
+      forceFetchAllPositions();
+    }, 3000);
 
     return () => {
-      supabase.removeChannel(trackingChannel);
-      supabase.removeChannel(deliveriesChannel);
+      clearInterval(interval);
       map.current?.remove();
       map.current = null;
     };
   }, []);
 
-  async function drawRouteOnManager(startLng: number, startLat: number, endLng: number, endLat: number) {
-    try {
-      const query = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${endLng},${endLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`);
-      const json = await query.json();
-      if (json.routes && json.routes.length > 0 && map.current) {
-        const source = map.current.getSource('manager-route') as mapboxgl.GeoJSONSource;
-        if (source) source.setData({ type: 'Feature', properties: {}, geometry: json.routes[0].geometry } as any);
-      }
-    } catch (e) { console.error("Erro na rota", e); }
-  }
-
-  async function showVehicleData(vehicle_id: string) {
-    if (!map.current) return;
-
-    // A MÁGICA ESTÁ AQUI: Vai forçar o Supabase a dar a última localização exata DESTE veículo neste milissegundo.
-    const { data: posData } = await supabase
-      .from('vehicle_positions')
-      .select('*')
-      .eq('vehicle_id', vehicle_id)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (posData) {
-      updateMarker(posData); // Desenha a bolinha verde
-      map.current.flyTo({ center: [posData.lng, posData.lat], zoom: 14, speed: 1.2 }); // Voa para Angola ou Portugal
-      
-      // Verifica entregas para desenhar a linha
-      const { data: delivery } = await supabase.from('deliveries').select('*').eq('driver_id', vehicle_id).eq('status', 'in_progress').single();
-      if (delivery) {
-        drawRouteOnManager(posData.lng, posData.lat, delivery.dropoff_lng || -9.3000, delivery.dropoff_lat || 38.7070);
-      } else {
-        const source = map.current.getSource('manager-route') as mapboxgl.GeoJSONSource;
-        if (source) source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } as any);
-      }
-    }
-  }
-
   function updateMarker(position: any) {
     if (!map.current) return;
     const { vehicle_id, lat, lng } = position;
-    positionsRef.current[vehicle_id] = position;
+    if (!lat || !lng) return;
 
     if (!markersRef.current[vehicle_id]) {
       const container = document.createElement('div');
       container.className = 'flex items-center justify-center w-8 h-8 cursor-pointer'; 
       
       const dot = document.createElement('div');
-      dot.className = 'w-4 h-4 bg-emerald-500 rounded-full border-2 border-black shadow-[0_0_10px_rgba(34,197,94,0.8)] transition-transform duration-200 hover:scale-150';
+      dot.className = 'w-4 h-4 bg-emerald-500 rounded-full border-2 border-white shadow-[0_0_15px_rgba(34,197,94,1)] animate-pulse';
       container.appendChild(dot);
       
       const marker = new mapboxgl.Marker(container).setLngLat([lng, lat]).addTo(map.current);
@@ -146,11 +87,22 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
     }
   }
 
-  // Quando o gestor clica na barra lateral, dispara o voo
+  // Se o gestor clicar num veículo na barra lateral, voa para ele
   useEffect(() => {
-    if (selectedVehicleId) {
-      showVehicleData(selectedVehicleId);
-    }
+    if (!selectedVehicleId || !map.current) return;
+    
+    supabase
+      .from('vehicle_positions')
+      .select('*')
+      .eq('vehicle_id', selectedVehicleId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          const { lat, lng } = data[0];
+          map.current?.flyTo({ center: [lng, lat], zoom: 12, speed: 1.5 });
+        }
+      });
   }, [selectedVehicleId]);
 
   return (
