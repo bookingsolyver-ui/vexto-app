@@ -8,7 +8,6 @@ import { Navigation, Package, PowerOff, Wifi, Camera, CheckCircle2, Truck, Car }
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
-// === LISTA FIXA DE VEÍCULOS PARA O TESTE ===
 const VEICULOS_TESTE = [
   { id: 'a708d088-4dff-4a95-8475-854b76a5295a', displayName: 'Bus 6023', plate: 'L 45623', type: 'bus' },
   { id: 'e-bus-07-teste-id', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
@@ -68,12 +67,10 @@ export default function DriverPage() {
       if (data && data.length > 0) setPendingOrder(data[0]);
     }
     fetchOrder();
-
     const channel = supabase.channel('driver-deliveries')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'deliveries' }, (payload) => {
         if (payload.new.status === 'pending') setPendingOrder(payload.new);
       }).subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, []);
 
@@ -89,6 +86,12 @@ export default function DriverPage() {
             const el = document.createElement('div');
             el.className = 'w-5 h-5 bg-emerald-500 rounded-full border-2 border-white shadow-[0_0_15px_rgba(34,197,94,0.9)] animate-pulse';
             markerRef.current = new mapboxgl.Marker(el).setLngLat([longitude, latitude]).addTo(map.current);
+            
+            // ===============================================
+            // CORREÇÃO: Fazer o ecrã voar para Angola / Localização Real
+            // ===============================================
+            map.current.flyTo({ center: [longitude, latitude], zoom: 15, essential: true });
+
           } else {
             markerRef.current.setLngLat([longitude, latitude]);
           }
@@ -167,14 +170,9 @@ export default function DriverPage() {
           <h1 className="text-3xl font-bold tracking-tight">Vexto Driver</h1>
           <p className="text-zinc-500 text-sm">Selecione o seu veículo</p>
         </div>
-        
         <div className="w-full max-w-sm flex flex-col gap-3">
           {veiculosDisponiveis.map(v => (
-            <button 
-              key={v.id} 
-              onClick={() => setMeuVeiculo(v)}
-              className="p-5 bg-zinc-900 border border-zinc-700 rounded-2xl flex justify-between items-center hover:border-emerald-500 transition-all text-left"
-            >
+            <button key={v.id} onClick={() => setMeuVeiculo(v)} className="p-5 bg-zinc-900 border border-zinc-700 rounded-2xl flex justify-between items-center hover:border-emerald-500 transition-all text-left">
               <div>
                 <div className="font-bold text-lg">{v.displayName}</div>
                 <div className="text-zinc-500 text-xs mt-1 uppercase tracking-widest">{v.plate}</div>
@@ -224,13 +222,8 @@ export default function DriverPage() {
             </label>
           )}
 
-          <button 
-            onClick={handleFinishDelivery}
-            disabled={!photoPreview}
-            className={`w-full max-w-sm py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-xl ${photoPreview ? 'bg-emerald-500 hover:bg-emerald-600 text-black' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}
-          >
-            <CheckCircle2 className="w-6 h-6" />
-            FINALIZAR ENTREGA
+          <button onClick={handleFinishDelivery} disabled={!photoPreview} className={`w-full max-w-sm py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-xl ${photoPreview ? 'bg-emerald-500 hover:bg-emerald-600 text-black' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
+            <CheckCircle2 className="w-6 h-6" /> FINALIZAR ENTREGA
           </button>
         </div>
       )}
