@@ -27,7 +27,6 @@ export default function Dashboard() {
       const { data, error } = await supabase.from('vehicles').select('*');
       if (data && data.length > 0) {
         setVehicles(data);
-        // Se nenhum estiver selecionado, seleciona o primeiro automaticamente
         if (!selectedVehicleId) {
           setSelectedVehicleId(data[0].id);
         }
@@ -38,7 +37,6 @@ export default function Dashboard() {
 
     fetchVehicles();
 
-    // Ouve novos veículos a registarem-se na base de dados
     const vehiclesChannel = supabase.channel('global-vehicles')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicles' }, () => {
         fetchVehicles();
@@ -79,10 +77,12 @@ export default function Dashboard() {
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [selectedVehicleId]);
 
-  // 3. ESCUTAR ENTREGAS DO VEÍCULO SELECIONADO
+  // 3. ESCUTAR ENTREGAS DO VEÍCULO SELECIONADO (Com maybeSingle seguro contra 406)
   useEffect(() => {
     if (!selectedVehicleId) {
       setActiveDelivery(null);
@@ -90,16 +90,26 @@ export default function Dashboard() {
     }
 
     const fetchDelivery = async () => {
-      const { data } = await supabase.from('deliveries').select('*').eq('driver_id', selectedVehicleId).eq('status', 'in_progress').single();
-      setActiveDelivery(data || null);
+      try {
+        const { data } = await supabase
+          .from('deliveries')
+          .select('*')
+          .eq('driver_id', selectedVehicleId)
+          .eq('status', 'in_progress')
+          .maybeSingle();
+        
+        setActiveDelivery(data || null);
+      } catch (err) {
+        setActiveDelivery(null);
+      }
     };
     fetchDelivery();
 
     const deliveriesChannel = supabase.channel(`deliveries-${selectedVehicleId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries', filter: `driver_id=eq.${selectedVehicleId}` }, (payload: any) => {
-         if (payload.new.status === 'completed' || payload.new.status === 'cancelled') {
+         if (payload.new && (payload.new.status === 'completed' || payload.new.status === 'cancelled')) {
            setActiveDelivery(null);
-         } else if (payload.new.status === 'in_progress') {
+         } else if (payload.new && payload.new.status === 'in_progress') {
            setActiveDelivery(payload.new);
          }
       }).subscribe();
@@ -117,14 +127,11 @@ export default function Dashboard() {
 
   return (
     <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg">
-
-      {/* O MAPA INTERATIVO NO FUNDO */}
       <div className="absolute inset-0 z-0">
         <LiveMap selectedVehicleId={selectedVehicleId} onSelectVehicle={setSelectedVehicleId} />
         <div className="absolute inset-0 bg-vexto-bg/40 pointer-events-none"></div>
       </div>
 
-      {/* MENU SUPERIOR FLUTUANTE */}
       <div className="absolute top-8 left-112.5 z-20 flex flex-col gap-2">
         <div className="glass-panel px-8 py-3 rounded-full flex items-center gap-8 border border-white/5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
           <div className="flex items-center gap-2 cursor-pointer">
@@ -134,9 +141,6 @@ export default function Dashboard() {
           <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Fleet</span>
           <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Routes</span>
           <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Analytics</span>
-          <div className="w-px h-4 bg-white/10 mx-2"></div>
-          <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Maintenance</span>
-          <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Incidents</span>
         </div>
 
         {isLiveGpsActive && (
@@ -147,9 +151,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* BARRA LATERAL (COMMAND CENTER DINÂMICO) */}
       <div className="glass-panel w-105 h-full rounded-none relative z-10 flex flex-col bg-vexto-bg/80 backdrop-blur-xl border-y-0 border-l-0 border-r border-white/5 overflow-hidden">
-        
         <header className="p-8 pb-6 shrink-0">
           <div className="flex items-center gap-3 mb-8">
             <div className="flex gap-0.5 transform -rotate-45">
@@ -159,10 +161,6 @@ export default function Dashboard() {
               <div className="w-1 h-3 bg-white rounded-full -mt-0.5"></div>
             </div>
             <h1 className="text-2xl font-medium tracking-tight text-white">Vexto</h1>
-          </div>
-
-          <div className="grid grid-cols-4 gap-2 mb-8">
-            <button className="glass-panel px-3 py-2 rounded-full border border-white/10 text-white text-xs font-medium hover:bg-white/5 transition-colors cursor-pointer">Frota</button>
           </div>
 
           <div className="flex gap-4 mb-8">
@@ -183,17 +181,14 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* LISTA DINÂMICA DE VEÍCULOS VINDO DO SUPABASE */}
         <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
           <div className="grid grid-cols-2 gap-4">
             {vehicles.map(vehicle => (
-              
               <div 
                 key={vehicle.id} 
                 onClick={() => setSelectedVehicleId(vehicle.id)}
                 className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5 shadow-[0_0_15px_rgba(34,197,94,0.1)]' : 'border-white/5 hover:border-white/20'}`}
               >
-                
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="text-white text-sm font-medium tracking-tight">{vehicle.display_name || vehicle.displayName || 'Veículo'}</h3>
@@ -206,8 +201,6 @@ export default function Dashboard() {
                     <span className="text-vexto-textMuted text-[10px]">L</span>
                     <span className="text-white text-xs tracking-widest font-medium uppercase">{vehicle.plate || 'S/N'}</span>
                   </div>
-                  <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_49%,rgba(255,255,255,0.03)_50%,transparent_51%)]" style={{ backgroundSize: '10px 100%' }}></div>
-                  <div className="absolute inset-0 bg-linear-to-b from-transparent to-black/80"></div>
                 </div>
 
                 <div className="flex justify-between items-center text-[10px] font-medium tracking-wide">
@@ -219,14 +212,12 @@ export default function Dashboard() {
                     <span className="flex items-center gap-1"><Wifi className="w-3 h-3" /> GPS</span>
                   </div>
                 </div>
-
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* PAINÉIS INFERIORES DIREITOS */}
       <div className="absolute bottom-8 right-8 z-20 flex items-end gap-6 pointer-events-none">
         <div className="glass-panel w-120 p-6 pointer-events-auto border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col justify-between">
            <div className="flex justify-between items-start mb-5">
@@ -248,7 +239,6 @@ export default function Dashboard() {
                    )}
                  </div>
               </div>
-              <ArrowUpRight className="text-vexto-textMuted w-5 h-5 hover:text-white cursor-pointer transition-colors" />
            </div>
 
            <div>
@@ -262,11 +252,6 @@ export default function Dashboard() {
                      <Line type="monotone" dataKey="value" stroke="#ffffff" strokeWidth={1.5} dot={{ r: 2, fill: '#ffffff', strokeWidth: 0 }} activeDot={{ r: 4, fill: '#ffffff' }} />
                    </LineChart>
                  </ResponsiveContainer>
-              </div>
-              <div className="flex justify-between text-[9px] text-vexto-textMuted tracking-widest uppercase border-t border-white/5 pt-3">
-                 {chartData.map((point) => (
-                   <span key={point.time}>{point.time}</span>
-                 ))}
               </div>
            </div>
         </div>
