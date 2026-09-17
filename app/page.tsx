@@ -1,11 +1,10 @@
 "use client";
 
 import LiveMap from '../components/LiveMap';
-import React, { useEffect, useRef, useState } from 'react';
-import { Wifi, ArrowUpRight, Navigation, AlertTriangle, AlertCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Wifi, ArrowUpRight, Navigation } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
-import { useFleetStore } from '../store/useFleetStore';
-import { supabase, LIVE_VEHICLE_ID, LiveVehiclePosition } from '../lib/supabaseClient';
+import { supabase, LiveVehiclePosition } from '../lib/supabaseClient';
 
 const fallbackPassengerData = [
   { time: '06:00', value: 45 },
@@ -16,33 +15,42 @@ const fallbackPassengerData = [
   { time: '21:00', value: 48 },
 ];
 
-// === LISTA DE VEÍCULOS COM OS UUIDs REAIS PARA O TESTE INTERNACIONAL ===
-const TEST_VEHICLES = [
-  { id: LIVE_VEHICLE_ID, displayName: 'Bus 6023', plate: 'L 45623', status: 'online', passengerLoadPct: 82, signals: { gps: true, lte: true }, lastUpdate: '2026-09-17T20:00:00Z' },
-  { id: '11111111-2222-3333-4444-555555555555', displayName: 'E-Bus 07', plate: 'L 34654', status: 'online', passengerLoadPct: 45, signals: { gps: true, lte: true }, lastUpdate: '2026-09-17T20:00:00Z' },
-  { id: '22222222-3333-4444-5555-666666666666', displayName: 'Taxi 100', plate: 'T 99887', status: 'offline', passengerLoadPct: 0, signals: { gps: false, lte: false }, lastUpdate: '2026-09-17T20:00:00Z' }
-];
-
 export default function Dashboard() {
+  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [livePosition, setLivePosition] = useState<LiveVehiclePosition | null>(null);
-  
-  // Inicia com o UUID dinâmico correto (Bus 6023)
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(LIVE_VEHICLE_ID);
-  
-  // NOVO ESTADO: Controla se o veículo selecionado tem uma entrega a decorrer
   const [activeDelivery, setActiveDelivery] = useState<any>(null);
 
-  const {
-    vehicles,
-    overview,
-    passengerVolume,
-    efficiency,
-    loadInitialData,
-    startLiveUpdates,
-    stopLiveUpdates,
-  } = useFleetStore();
+  // 1. BUSCAR TODOS OS VEÍCULOS REGISTADOS NA BASE DE DADOS EM TEMPO REAL
+  useEffect(() => {
+    async function fetchVehicles() {
+      const { data, error } = await supabase.from('vehicles').select('*');
+      if (data && data.length > 0) {
+        setVehicles(data);
+        // Se nenhum estiver selecionado, seleciona o primeiro automaticamente
+        if (!selectedVehicleId) {
+          setSelectedVehicleId(data[0].id);
+        }
+      } else if (error) {
+        console.error("Erro ao buscar veículos:", error);
+      }
+    }
 
-// ESCUTA DINÂMICA: Muda automaticamente consoante o veículo que o gestor clicar
+    fetchVehicles();
+
+    // Ouve novos veículos a registarem-se na base de dados
+    const vehiclesChannel = supabase.channel('global-vehicles')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicles' }, () => {
+        fetchVehicles();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(vehiclesChannel);
+    };
+  }, []);
+
+  // 2. ESCUTA DINÂMICA DO GPS DO VEÍCULO SELECIONADO NA BARRA LATERAL
   useEffect(() => {
     if (!selectedVehicleId) return;
 
@@ -64,9 +72,9 @@ export default function Dashboard() {
       .channel(`dynamic-pos-${selectedVehicleId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${selectedVehicleId}` },
-        (payload) => {
-          setLivePosition(payload.new as any);
+        { event: 'INSERT', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${selectedVehicleId}` },
+        (payload: any) => {
+          setLivePosition(payload.new);
         }
       )
       .subscribe();
@@ -74,7 +82,7 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [selectedVehicleId]);
 
-  // NOVA LÓGICA: Escutar as entregas do veículo que o Gestor clicou
+  // 3. ESCUTAR ENTREGAS DO VEÍCULO SELECIONADO
   useEffect(() => {
     if (!selectedVehicleId) {
       setActiveDelivery(null);
@@ -99,15 +107,13 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(deliveriesChannel); };
   }, [selectedVehicleId]);
 
-  const onlineCount = 2; // Força a mostrar apenas os 2 veículos de teste ativos
-  const offlineCount = overview?.offlineCount ?? 1;
-  const passengerToday = passengerVolume?.todayTotal ?? 142580;
-  const chartData = passengerVolume?.series ?? fallbackPassengerData;
+  const onlineCount = vehicles.length || 2;
+  const offlineCount = 0;
+  const passengerToday = 142580;
+  const chartData = fallbackPassengerData;
 
   const isLiveGpsActive = livePosition && Date.now() - new Date(livePosition.updated_at).getTime() < 15000;
-
-  // Encontrar os dados do veículo selecionado para colocar no título do painel
-  const selectedVeh = TEST_VEHICLES.find(v => v.id === selectedVehicleId) || TEST_VEHICLES[0];
+  const selectedVeh = vehicles.find(v => v.id === selectedVehicleId) || vehicles[0];
 
   return (
     <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg">
@@ -141,7 +147,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* NOVA BARRA LATERAL (COMMAND CENTER) */}
+      {/* BARRA LATERAL (COMMAND CENTER DINÂMICO) */}
       <div className="glass-panel w-105 h-full rounded-none relative z-10 flex flex-col bg-vexto-bg/80 backdrop-blur-xl border-y-0 border-l-0 border-r border-white/5 overflow-hidden">
         
         <header className="p-8 pb-6 shrink-0">
@@ -156,17 +162,14 @@ export default function Dashboard() {
           </div>
 
           <div className="grid grid-cols-4 gap-2 mb-8">
-            <button className="glass-panel px-3 py-2 rounded-full border border-white/10 text-white text-xs font-medium hover:bg-white/5 transition-colors cursor-pointer">24 Bus</button>
-            <button className="glass-panel px-3 py-2 rounded-full border border-transparent text-vexto-textMuted text-xs font-medium hover:text-white transition-colors cursor-pointer">100 Taxi</button>
-            <button className="glass-panel px-3 py-2 rounded-full border border-transparent text-vexto-textMuted text-xs font-medium hover:text-white transition-colors cursor-pointer">12 Trains</button>
-            <button className="glass-panel px-3 py-2 rounded-full border border-transparent text-vexto-textMuted text-xs font-medium hover:text-white transition-colors cursor-pointer">13 Trams</button>
+            <button className="glass-panel px-3 py-2 rounded-full border border-white/10 text-white text-xs font-medium hover:bg-white/5 transition-colors cursor-pointer">Frota</button>
           </div>
 
           <div className="flex gap-4 mb-8">
             <div className="flex-1 glass-panel px-5 py-4 rounded-2xl flex flex-col gap-1 border border-white/5">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]"></span>
-                <span className="text-vexto-textMuted text-xs">Online</span>
+                <span className="text-vexto-textMuted text-xs">Ativos</span>
               </div>
               <span className="text-2xl text-functional text-white mt-1">{onlineCount}</span>
             </div>
@@ -178,37 +181,22 @@ export default function Dashboard() {
               <span className="text-2xl text-functional text-white mt-1">{offlineCount}</span>
             </div>
           </div>
-
-          <div className="flex flex-col gap-2 mb-2">
-            <div className="flex justify-between items-end">
-              <span className="text-vexto-textMuted text-xs">Operational Efficiency</span>
-              <ArrowUpRight className="text-vexto-textMuted w-4 h-4 cursor-pointer hover:text-white" />
-            </div>
-            <div className="flex items-baseline gap-1">
-              <span className="text-4xl text-functional text-white">{efficiency ? efficiency.operationalEfficiencyPct : '78.3'}</span>
-              <span className="text-vexto-textMuted text-sm">%</span>
-            </div>
-            <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest mt-1">Target 80%</span>
-          </div>
         </header>
 
-        {/* LISTA DE VEÍCULOS (CLICÁVEL) */}
+        {/* LISTA DINÂMICA DE VEÍCULOS VINDO DO SUPABASE */}
         <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
           <div className="grid grid-cols-2 gap-4">
-            {TEST_VEHICLES.map(vehicle => (
+            {vehicles.map(vehicle => (
               
               <div 
                 key={vehicle.id} 
                 onClick={() => setSelectedVehicleId(vehicle.id)}
-                className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5' : 'border-white/5 hover:border-white/20'}`}
+                className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5 shadow-[0_0_15px_rgba(34,197,94,0.1)]' : 'border-white/5 hover:border-white/20'}`}
               >
                 
                 <div className="flex justify-between items-start">
                   <div>
-                    <h3 className="text-white text-sm font-medium tracking-tight">{vehicle.displayName}</h3>
-                    <p className="text-vexto-textMuted text-[10px] mt-0.5 opacity-60">
-                      {new Date(vehicle.lastUpdate).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
-                    </p>
+                    <h3 className="text-white text-sm font-medium tracking-tight">{vehicle.display_name || vehicle.displayName || 'Veículo'}</h3>
                   </div>
                   <ArrowUpRight className="text-vexto-textMuted w-4 h-4 group-hover:text-white transition-colors" />
                 </div>
@@ -216,7 +204,7 @@ export default function Dashboard() {
                 <div className="h-14 border border-white/5 rounded-lg flex items-center justify-center bg-black/20 relative overflow-hidden mt-1">
                   <div className="border border-white/10 px-3 py-1 rounded bg-black/60 backdrop-blur-md flex items-center gap-2 z-10">
                     <span className="text-vexto-textMuted text-[10px]">L</span>
-                    <span className="text-white text-xs tracking-widest font-medium uppercase">{vehicle.plate}</span>
+                    <span className="text-white text-xs tracking-widest font-medium uppercase">{vehicle.plate || 'S/N'}</span>
                   </div>
                   <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_49%,rgba(255,255,255,0.03)_50%,transparent_51%)]" style={{ backgroundSize: '10px 100%' }}></div>
                   <div className="absolute inset-0 bg-linear-to-b from-transparent to-black/80"></div>
@@ -224,40 +212,11 @@ export default function Dashboard() {
 
                 <div className="flex justify-between items-center text-[10px] font-medium tracking-wide">
                   <div className="flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${vehicle.status === 'online' ? 'bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-vexto-red shadow-[0_0_8px_rgba(239,68,68,0.8)]'}`}></span>
-                    <span className={vehicle.status === 'online' ? 'text-vexto-green' : 'text-vexto-red'}>
-                      {vehicle.status === 'online' ? 'Online' : 'Offline'}
-                    </span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]"></span>
+                    <span className="text-vexto-green">Online</span>
                   </div>
                   <div className="flex gap-3 text-vexto-textMuted">
-                    <span className="flex items-center gap-1"><Wifi className="w-3 h-3" /> {vehicle.signals?.gps ? 'GPS' : '—'}</span>
-                    <span className="flex items-center gap-1"><Navigation className="w-3 h-3" /> {vehicle.signals?.lte ? 'LTE' : '—'}</span>
-                  </div>
-                </div>
-
-                <div className="mt-1 h-24 rounded-lg bg-[#050505] border border-white/5 relative overflow-hidden flex flex-col justify-end p-2.5">
-                  <svg className="absolute inset-0 w-full h-full opacity-30" preserveAspectRatio="none" viewBox="0 0 100 100">
-                    <path d="M -10,90 L 30,50 L 50,70 L 80,20 L 110,30" fill="none" stroke="#ffffff" strokeWidth="1" strokeDasharray="2,2" />
-                  </svg>
-                  {vehicle.status === 'online' && (
-                    <div className="absolute top-[45%] left-[45%] w-2 h-2 bg-white rounded-full border border-black shadow-[0_0_10px_rgba(255,255,255,1)]">
-                      <div className="absolute -inset-2 border border-white/30 rounded-full animate-ping"></div>
-                    </div>
-                  )}
-
-                  <div className="relative z-10 w-full mt-auto">
-                    <div className="flex justify-between text-[8px] text-vexto-textMuted mb-1.5 uppercase tracking-wider">
-                      <span>06AM</span>
-                      <span>11PM</span>
-                    </div>
-                    <div className="w-full h-2 relative flex items-center">
-                      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.1)_1px,transparent_1px)]" style={{ backgroundSize: '3px 100%' }}></div>
-                      <div className="absolute left-0 h-full bg-[linear-gradient(90deg,rgba(255,255,255,0.4)_1px,transparent_1px)]" style={{ backgroundSize: '3px 100%', width: `${Math.max(10, vehicle.passengerLoadPct)}%` }}></div>
-                      
-                      <div className="absolute z-20 bg-black border border-white/20 rounded p-0.5 shadow-lg transform -translate-y-1/2" style={{ left: `calc(${Math.max(10, vehicle.passengerLoadPct)}% - 8px)` }}>
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="4" y="11" width="16" height="2"></rect><path d="M8 20v2"></path><path d="M16 20v2"></path><circle cx="8" cy="15" r="1"></circle><circle cx="16" cy="15" r="1"></circle></svg>
-                      </div>
-                    </div>
+                    <span className="flex items-center gap-1"><Wifi className="w-3 h-3" /> GPS</span>
                   </div>
                 </div>
 
@@ -267,83 +226,14 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* WIDGET DE CONTROLOS DO MAPA */}
-      <div className="absolute bottom-8 left-112.5 z-20 glass-panel px-5 py-2.5 rounded-full flex items-center gap-5 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] pointer-events-auto">
-        <button className="text-vexto-textMuted hover:text-white transition-colors cursor-pointer">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></svg>
-        </button>
-        <div className="w-px h-4 bg-white/10"></div>
-        <button className="text-white transition-colors cursor-pointer">
-          <div className="flex gap-0.5 transform -rotate-45">
-            <div className="w-0.5 h-3 bg-white rounded-full"></div>
-            <div className="w-0.5 h-4 bg-white rounded-full -mt-0.5"></div>
-            <div className="w-0.5 h-3 bg-white rounded-full -mt-1"></div>
-            <div className="w-0.5 h-2 bg-white rounded-full -mt-0.5"></div>
-          </div>
-        </button>
-        <div className="w-px h-4 bg-white/10"></div>
-        <button className="text-vexto-textMuted hover:text-white transition-colors cursor-pointer">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1 0-2.83 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-        </button>
-      </div>
-
       {/* PAINÉIS INFERIORES DIREITOS */}
       <div className="absolute bottom-8 right-8 z-20 flex items-end gap-6 pointer-events-none">
-
-        {/* Schedule Offset */}
-        <div className="glass-panel w-105 p-6 pointer-events-auto flex flex-col gap-5 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
-          <div className="flex justify-between items-start">
-             <div>
-               <h3 className="text-white text-sm font-medium tracking-tight">Schedule Offset</h3>
-               <div className="flex items-baseline gap-2 mt-1">
-                 <span className="text-2xl text-functional text-white">± 2.5 min</span>
-                 <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Average Variance</span>
-               </div>
-             </div>
-             <div className="flex gap-2">
-               <button className="w-8 h-8 rounded-full border border-white/10 flex items-center justify-center text-vexto-textMuted hover:text-white hover:bg-white/5 transition-colors cursor-pointer">+</button>
-               <button className="w-8 h-8 rounded-full border border-white/10 flex items-center justify-center text-vexto-textMuted hover:text-white hover:bg-white/5 transition-colors cursor-pointer">-</button>
-             </div>
-          </div>
-
-          <div className="flex flex-col gap-4">
-            <div className="flex justify-between text-[9px] text-vexto-textMuted uppercase tracking-[0.2em]">
-              <span className="w-16">Route number</span>
-              <span>L1</span>
-              <span>L12</span>
-              <span>L14</span>
-              <span>L24</span>
-            </div>
-            
-            <div className="flex justify-between items-center text-xs border-t border-white/5 pt-3">
-              <span className="text-vexto-textMuted w-16 tracking-widest text-[10px]">L 45623</span>
-              <span className="text-white">-2min</span>
-              <span className="text-vexto-orange">+3min</span>
-              <span className="text-vexto-orange">+1.5min</span>
-              <span className="text-white">-1min</span>
-            </div>
-            
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-vexto-textMuted w-16 tracking-widest text-[10px]">L 34654</span>
-              <span className="text-white">-1min</span>
-              <span className="text-white">-2min</span>
-              <span className="text-vexto-orange">+2min</span>
-              <span className="text-vexto-orange">+2min</span>
-            </div>
-          </div>
-        </div>
-
-        {/* ====================================================== */}
-        {/* MÓDULO DINÂMICO (Volume de Passageiros / Em Entrega)   */}
-        {/* ====================================================== */}
         <div className="glass-panel w-120 p-6 pointer-events-auto border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col justify-between">
-           
            <div className="flex justify-between items-start mb-5">
               <div>
                  <h3 className="text-white text-sm font-medium tracking-tight">
-                   Análise: {selectedVeh?.displayName || 'Frota'}
+                   Análise: {selectedVeh?.display_name || selectedVeh?.displayName || 'Frota'}
                  </h3>
-                 
                  <div className="flex items-center gap-2 mt-2">
                    {activeDelivery ? (
                      <div className="px-2 py-1 bg-vexto-green/10 border border-vexto-green/30 rounded text-vexto-green text-[10px] uppercase tracking-widest font-bold flex items-center gap-2">
@@ -361,41 +251,18 @@ export default function Dashboard() {
               <ArrowUpRight className="text-vexto-textMuted w-5 h-5 hover:text-white cursor-pointer transition-colors" />
            </div>
 
-           {activeDelivery && (
-             <div className="mb-5 bg-black/40 border border-white/5 rounded-xl p-3 flex flex-col gap-1">
-               <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Destino Atual</span>
-               <span className="text-white text-xs leading-relaxed">{activeDelivery.dropoff_address}</span>
-             </div>
-           )}
-
            <div>
               <div className="flex justify-between items-end mb-2">
-                <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">
-                  {activeDelivery ? 'Atividade Operacional (24h)' : 'Volume de Passageiros (Hoje)'}
-                </span>
-                <span className="text-2xl text-functional text-white">
-                  {activeDelivery ? '82%' : passengerToday.toLocaleString('en-US')}
-                </span>
+                <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Volume de Passageiros (Hoje)</span>
+                <span className="text-2xl text-functional text-white">{passengerToday.toLocaleString('en-US')}</span>
               </div>
-
               <div className="h-28 w-full relative mb-3">
                  <ResponsiveContainer width="100%" height="100%">
                    <LineChart data={chartData}>
-                     <Line type="monotone" dataKey="value" stroke={activeDelivery ? '#22c55e' : '#ffffff'} strokeWidth={1.5} dot={{ r: 2, fill: activeDelivery ? '#22c55e' : '#ffffff', strokeWidth: 0 }} activeDot={{ r: 4, fill: '#ffffff' }} />
+                     <Line type="monotone" dataKey="value" stroke="#ffffff" strokeWidth={1.5} dot={{ r: 2, fill: '#ffffff', strokeWidth: 0 }} activeDot={{ r: 4, fill: '#ffffff' }} />
                    </LineChart>
                  </ResponsiveContainer>
-                 
-                 <div className="absolute top-2 left-6 px-1.5 py-0.5 bg-black/60 border border-white/10 rounded flex gap-1 items-center text-[9px] text-white backdrop-blur-md">
-                    <span className="text-vexto-textMuted">55k</span> -0%
-                  </div>
-                  <div className="absolute top-10 left-[38%] px-1.5 py-0.5 bg-vexto-orange/10 border border-vexto-orange/30 rounded flex gap-1 items-center text-[9px] text-vexto-orange backdrop-blur-md shadow-[0_0_10px_rgba(249,115,22,0.1)]">
-                    <span className="text-vexto-textMuted">56k</span> +6%
-                  </div>
-                  <div className="absolute top-16 right-12 px-1.5 py-0.5 bg-vexto-green/10 border border-vexto-green/30 rounded flex gap-1 items-center text-[9px] text-vexto-green backdrop-blur-md shadow-[0_0_10px_rgba(34,197,94,0.1)]">
-                    <span className="text-vexto-textMuted">52k</span> -12%
-                  </div>
               </div>
-              
               <div className="flex justify-between text-[9px] text-vexto-textMuted tracking-widest uppercase border-t border-white/5 pt-3">
                  {chartData.map((point) => (
                    <span key={point.time}>{point.time}</span>
