@@ -3,21 +3,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { supabase, LIVE_VEHICLE_ID } from '../../lib/supabaseClient';
-import { Navigation, Package, PowerOff, Wifi, Camera, CheckCircle2, Truck, Car } from 'lucide-react';
+import { supabase } from '../../lib/supabaseClient';
+import { Navigation, Package, PowerOff, Wifi, Camera, CheckCircle2, Truck } from 'lucide-react';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
-const VEICULOS_TESTE = [
-  { id: LIVE_VEHICLE_ID, displayName: 'Bus 6023', plate: 'L 45623', type: 'bus' },
-  { id: '2bee1ec2-380f-4fe2-9eb7-03ef2c5f9e0e', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
-  { id: 'b2b03f55-4fab-4bc8-b8f7-517563ec8000', displayName: 'Taxi 100', plate: 'T 99887', type: 'car' }
-];
-
 export default function DriverPage() {
-  const [veiculosDisponiveis] = useState<any[]>(VEICULOS_TESTE);
-  const [meuVeiculo, setMeuVeiculo] = useState<any>(null);
+  const [driverName, setDriverName] = useState('');
+  const [vehicleId, setVehicleId] = useState<string | null>(null);
+  const [plate, setPlate] = useState('');
 
+  const [registered, setRegistered] = useState(false);
   const [tracking, setTracking] = useState(false);
   const [pendingOrder, setPendingOrder] = useState<any>(null);
   const [activeOrder, setActiveOrder] = useState<any>(null);
@@ -31,8 +27,34 @@ export default function DriverPage() {
   const markerRef = useRef<mapboxgl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
+  // Gera ou recupera um UUID único para este telemóvel específico
   useEffect(() => {
-    if (!tracking || !mapContainer.current || !meuVeiculo) return;
+    let storedId = localStorage.getItem('vexto_driver_id');
+    if (!storedId) {
+      storedId = crypto.randomUUID();
+      localStorage.setItem('vexto_driver_id', storedId);
+    }
+    setVehicleId(storedId);
+  }, []);
+
+  // Regista o veículo automaticamente no Supabase
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault();
+    if (!driverName || !plate || !vehicleId) return;
+
+    const { error } = await supabase.from('vehicles').upsert([
+      { id: vehicleId, display_name: driverName, plate: plate, status: 'online' }
+    ], { onConflict: 'id' });
+
+    if (error) {
+      alert("Erro ao registar: " + error.message);
+    } else {
+      setRegistered(true);
+    }
+  }
+
+  useEffect(() => {
+    if (!tracking || !mapContainer.current || !vehicleId) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
     map.current = new mapboxgl.Map({
@@ -49,15 +71,6 @@ export default function DriverPage() {
           map.current.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 15, essential: true });
         }
       });
-
-      if (!map.current.getSource('route')) {
-        map.current.addSource('route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } });
-        map.current.addLayer({
-          id: 'route-line', type: 'line', source: 'route',
-          layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 'line-color': '#22c55e', 'line-width': 6, 'line-opacity': 0.9 }
-        });
-      }
     });
 
     return () => {
@@ -65,28 +78,10 @@ export default function DriverPage() {
       map.current?.remove();
       map.current = null;
     };
-  }, [tracking, meuVeiculo]);
+  }, [tracking]);
 
-  useEffect(() => {
-    async function fetchOrder() {
-      const { data } = await supabase.from('deliveries').select('*').eq('status', 'pending').limit(1);
-      if (data && data.length > 0) setPendingOrder(data[0]);
-    }
-    fetchOrder();
-    const channel = supabase.channel('driver-deliveries')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'deliveries' }, (payload) => {
-        if (payload.new.status === 'pending') setPendingOrder(payload.new);
-      }).subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, []);
-
-async function startTracking() {
-    if (!navigator.geolocation || !meuVeiculo) return;
-
-    // GARANTE QUE O VEÍCULO EXISTE NA BASE DE DADOS ANTES DE ENVIAR O GPS
-    await supabase.from('vehicles').upsert([
-      { id: meuVeiculo.id, display_name: meuVeiculo.displayName, plate: meuVeiculo.plate, status: 'online' }
-    ], { onConflict: 'id' });
+  async function startTracking() {
+    if (!navigator.geolocation || !vehicleId) return;
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       async (pos) => {
@@ -103,18 +98,17 @@ async function startTracking() {
           map.current.easeTo({ center: [longitude, latitude], duration: 1000 });
         }
 
+        // Insere a nova posição única deste telemóvel
         const { error } = await supabase.from('vehicle_positions').insert({
-          vehicle_id: meuVeiculo.id, lat: latitude, lng: longitude,
-          heading: heading ?? null, speed_kmh: speed ? speed * 3.6 : null,
+          vehicle_id: vehicleId, 
+          lat: latitude, 
+          lng: longitude,
+          heading: heading ?? null, 
+          speed_kmh: speed ? speed * 3.6 : null,
           updated_at: new Date().toISOString(),
         });
 
-        if (error) {
-          console.error("Erro GPS:", error);
-          alert("Erro Supabase: " + error.message);
-        } else {
-          setSentCount((n) => n + 1);
-        }
+        if (!error) setSentCount((n) => n + 1);
       },
       (err) => console.error(err),
       { enableHighAccuracy: true }
@@ -125,74 +119,42 @@ async function startTracking() {
   function stopTracking() {
     if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
     setTracking(false);
-    setActiveOrder(null);
-    setIsArrived(false);
-    setPhotoPreview(null);
   }
 
-  async function fetchRoute(startLng: number, startLat: number, endLng: number, endLat: number) {
-    try {
-      const query = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${endLng},${endLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`);
-      const json = await query.json();
-      if (json.routes && json.routes.length > 0 && map.current) {
-        const source = map.current.getSource('route') as mapboxgl.GeoJSONSource;
-        if (source) source.setData({ type: 'Feature', properties: {}, geometry: json.routes[0].geometry } as any);
-        const bounds = new mapboxgl.LngLatBounds();
-        json.routes[0].geometry.coordinates.forEach((c: any) => bounds.extend(c));
-        map.current.fitBounds(bounds, { padding: 80, maxZoom: 15 });
-      }
-    } catch (e) { console.error("Erro na rota", e); }
-  }
-
-  async function handleAcceptOrder() {
-    if (!pendingOrder || !meuVeiculo) return;
-    await supabase.from('deliveries').update({ status: 'in_progress', driver_id: meuVeiculo.id }).eq('id', pendingOrder.id);
-    setActiveOrder(pendingOrder);
-    setPendingOrder(null);
-    if (map.current && markerRef.current) {
-      const pos = markerRef.current.getLngLat();
-      fetchRoute(pos.lng, pos.lat, pendingOrder.dropoff_lng || -9.3000, pendingOrder.dropoff_lat || 38.7070);
-    }
-  }
-
-  function handlePhotoCapture(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) setPhotoPreview(URL.createObjectURL(file));
-  }
-
-  async function handleFinishDelivery() {
-    if (!activeOrder) return;
-    await supabase.from('deliveries').update({ status: 'completed' }).eq('id', activeOrder.id);
-    if (map.current) {
-      const source = map.current.getSource('route') as mapboxgl.GeoJSONSource;
-      if (source) source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } as any);
-      map.current.flyTo({ zoom: 15 });
-    }
-    setActiveOrder(null);
-    setIsArrived(false);
-    setPhotoPreview(null);
-  }
-
-  if (!meuVeiculo) {
+  if (!registered) {
     return (
-      <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-8 font-sans gap-8">
-        <div className="flex flex-col items-center gap-2">
+      <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-8 font-sans gap-6">
+        <div className="flex flex-col items-center gap-2 text-center">
           <h1 className="text-3xl font-bold tracking-tight">Vexto Driver</h1>
-          <p className="text-zinc-500 text-sm">Selecione o seu veículo</p>
+          <p className="text-zinc-500 text-sm">Insere os dados do teu veículo/equipa</p>
         </div>
-        <div className="w-full max-w-sm flex flex-col gap-3">
-          {veiculosDisponiveis.map(v => (
-            <button key={v.id} onClick={() => setMeuVeiculo(v)} className="p-5 bg-zinc-900 border border-zinc-700 rounded-2xl flex justify-between items-center hover:border-emerald-500 transition-all text-left">
-              <div>
-                <div className="font-bold text-lg">{v.displayName}</div>
-                <div className="text-zinc-500 text-xs mt-1 uppercase tracking-widest">{v.plate}</div>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center">
-                {v.type === 'bus' ? <Truck className="w-5 h-5 text-emerald-500" /> : <Car className="w-5 h-5 text-emerald-500" />}
-              </div>
-            </button>
-          ))}
-        </div>
+        <form onSubmit={handleRegister} className="w-full max-w-sm flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-zinc-400 uppercase tracking-widest">Nome do Veículo / Equipa</label>
+            <input 
+              type="text" 
+              placeholder="Ex: E-Bus Angola" 
+              value={driverName} 
+              onChange={e => setDriverName(e.target.value)}
+              className="p-4 bg-zinc-900 border border-zinc-700 rounded-xl text-white outline-none focus:border-emerald-500"
+              required 
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-zinc-400 uppercase tracking-widest">Matrícula / Placa</label>
+            <input 
+              type="text" 
+              placeholder="Ex: L 34654" 
+              value={plate} 
+              onChange={e => setPlate(e.target.value)}
+              className="p-4 bg-zinc-900 border border-zinc-700 rounded-xl text-white outline-none focus:border-emerald-500"
+              required 
+            />
+          </div>
+          <button type="submit" className="w-full py-4 bg-emerald-500 text-black font-bold rounded-xl mt-2 hover:bg-emerald-400 transition-all">
+            REGISTAR E ENTRAR
+          </button>
+        </form>
       </main>
     );
   }
@@ -202,13 +164,13 @@ async function startTracking() {
       <main className="min-h-screen bg-black text-white flex flex-col items-center justify-between p-8 font-sans">
         <div className="flex flex-col items-center gap-2 mt-8">
           <h1 className="text-xl font-medium tracking-tight">Vexto Mobile</h1>
-          <p className="text-zinc-500 text-xs tracking-widest uppercase">Motorista — {meuVeiculo.displayName}</p>
+          <p className="text-emerald-400 text-xs tracking-widest uppercase font-bold">{driverName} ({plate})</p>
         </div>
         <button onClick={startTracking} className="w-48 h-48 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex flex-col items-center justify-center gap-3 shadow-[0_0_60px_rgba(34,197,94,0.2)]">
           <Navigation className="w-8 h-8 text-emerald-400" />
           <span className="text-lg font-medium tracking-tight text-emerald-400">INICIAR TURNO</span>
         </button>
-        <button onClick={() => setMeuVeiculo(null)} className="text-zinc-600 text-xs mb-4 underline">Trocar de Veículo</button>
+        <button onClick={() => setRegistered(false)} className="text-zinc-600 text-xs mb-4 underline">Alterar Dados</button>
       </main>
     );
   }
@@ -216,52 +178,10 @@ async function startTracking() {
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
-
-      {isArrived && (
-        <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-6 gap-6 backdrop-blur-md">
-          <h2 className="text-2xl font-bold text-white">Prova de Entrega</h2>
-          <p className="text-zinc-400 text-center text-sm">Tira uma foto à encomenda ou ao local.</p>
-          {photoPreview ? (
-            <img src={photoPreview} alt="Comprovativo" className="w-full max-h-[50vh] object-cover rounded-2xl border-2 border-emerald-500 shadow-2xl" />
-          ) : (
-            <label className="w-full max-w-sm aspect-square bg-zinc-800 border-2 border-dashed border-zinc-600 rounded-3xl flex flex-col items-center justify-center gap-4 cursor-pointer hover:bg-zinc-700 transition-all">
-              <Camera className="w-16 h-16 text-zinc-400" />
-              <span className="text-zinc-300 font-medium">Abrir Câmera</span>
-              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoCapture} />
-            </label>
-          )}
-          <button onClick={handleFinishDelivery} disabled={!photoPreview} className={`w-full max-w-sm py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-xl ${photoPreview ? 'bg-emerald-500 hover:bg-emerald-600 text-black' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
-            <CheckCircle2 className="w-6 h-6" /> FINALIZAR ENTREGA
-          </button>
-        </div>
-      )}
-
-      {!isArrived && (
-        <div className="absolute top-4 inset-x-4 z-10 flex flex-col gap-2">
-          {pendingOrder && !activeOrder && (
-            <div className="bg-zinc-900/95 backdrop-blur-md border border-amber-500/40 p-4 rounded-2xl shadow-2xl flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-amber-400 font-medium text-sm"><Package className="w-5 h-5" /> Nova Entrega Disponível</div>
-              <p className="text-xs text-white/80"><b>Destino:</b> {pendingOrder.dropoff_address || 'Oeiras Parque'}</p>
-              <button onClick={handleAcceptOrder} className="bg-emerald-500 text-black font-bold py-3 rounded-xl text-sm shadow-lg">ACEITAR ENTREGA</button>
-            </div>
-          )}
-
-          {activeOrder && (
-            <div className="bg-zinc-900/95 backdrop-blur-md border border-emerald-500/40 p-4 rounded-2xl shadow-xl flex flex-col gap-3">
-              <div className="flex justify-between items-center">
-                <span className="text-emerald-400 text-sm font-bold flex items-center gap-2"><div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" /> Em Rota</span>
-                <span className="text-xs text-zinc-400">{activeOrder.dropoff_address}</span>
-              </div>
-              <button onClick={() => setIsArrived(true)} className="bg-white text-black hover:bg-zinc-200 font-bold py-3 rounded-xl text-sm transition-all">CHEGUEI AO DESTINO</button>
-            </div>
-          )}
-        </div>
-      )}
-
       <div className="absolute bottom-6 inset-x-4 z-10 flex items-center justify-between bg-zinc-900/90 backdrop-blur-md border border-white/10 p-4 rounded-2xl shadow-2xl">
         <div className="flex items-center gap-2">
           <Wifi className="w-4 h-4 text-emerald-400 animate-pulse" />
-          <span className="text-xs text-white font-medium">{sentCount} pacotes</span>
+          <span className="text-xs text-white font-medium">{sentCount} pacotes enviados</span>
         </div>
         <button onClick={stopTracking} className="flex items-center gap-2 bg-red-500/20 border border-red-500/40 text-red-400 px-4 py-2.5 rounded-xl text-xs font-bold">
           <PowerOff className="w-4 h-4" /> FECHAR
