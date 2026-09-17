@@ -51,15 +51,15 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
       });
     });
 
-    async function fetchInitialPositions() {
-      const { data } = await supabase.from('vehicle_positions').select('*');
-      data?.forEach(updateMarker);
-    }
-    fetchInitialPositions();
-
+    // Escuta novas posições em tempo real
     const trackingChannel = supabase.channel('manager-tracking')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_positions' }, (payload) => {
          updateMarker(payload.new);
+         
+         // NOVO: Se o mapa estiver focado neste veículo e ele se mexer, a câmara vai segui-lo suavemente!
+         if (selectedVehicleRef.current === payload.new.vehicle_id && map.current) {
+            map.current.easeTo({ center: [payload.new.lng, payload.new.lat], duration: 1000 });
+         }
       })
       .subscribe();
 
@@ -94,19 +94,30 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
     } catch (e) { console.error("Erro na rota", e); }
   }
 
-  // Agora apenas voa e desenha a rota (sem popup!)
   async function showVehicleData(vehicle_id: string) {
-    const pos = positionsRef.current[vehicle_id];
-    if (!pos || !map.current) return;
+    if (!map.current) return;
 
-    map.current.flyTo({ center: [pos.lng, pos.lat], zoom: 14, speed: 1.2 });
+    // A MÁGICA ESTÁ AQUI: Vai forçar o Supabase a dar a última localização exata DESTE veículo neste milissegundo.
+    const { data: posData } = await supabase
+      .from('vehicle_positions')
+      .select('*')
+      .eq('vehicle_id', vehicle_id)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .single();
 
-    const { data: delivery } = await supabase.from('deliveries').select('*').eq('driver_id', vehicle_id).eq('status', 'in_progress').single();
-    if (delivery) {
-      drawRouteOnManager(pos.lng, pos.lat, delivery.dropoff_lng || -9.3000, delivery.dropoff_lat || 38.7070);
-    } else {
-      const source = map.current.getSource('manager-route') as mapboxgl.GeoJSONSource;
-      if (source) source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } as any);
+    if (posData) {
+      updateMarker(posData); // Desenha a bolinha verde
+      map.current.flyTo({ center: [posData.lng, posData.lat], zoom: 14, speed: 1.2 }); // Voa para Angola ou Portugal
+      
+      // Verifica entregas para desenhar a linha
+      const { data: delivery } = await supabase.from('deliveries').select('*').eq('driver_id', vehicle_id).eq('status', 'in_progress').single();
+      if (delivery) {
+        drawRouteOnManager(posData.lng, posData.lat, delivery.dropoff_lng || -9.3000, delivery.dropoff_lat || 38.7070);
+      } else {
+        const source = map.current.getSource('manager-route') as mapboxgl.GeoJSONSource;
+        if (source) source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } as any);
+      }
     }
   }
 
@@ -135,8 +146,9 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
     }
   }
 
+  // Quando o gestor clica na barra lateral, dispara o voo
   useEffect(() => {
-    if (selectedVehicleId && positionsRef.current[selectedVehicleId]) {
+    if (selectedVehicleId) {
       showVehicleData(selectedVehicleId);
     }
   }, [selectedVehicleId]);
