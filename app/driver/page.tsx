@@ -17,7 +17,6 @@ export default function DriverPage() {
   // Estados para a Prova de Entrega (Câmera)
   const [isArrived, setIsArrived] = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  
   const [sentCount, setSentCount] = useState(0);
 
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -25,7 +24,6 @@ export default function DriverPage() {
   const markerRef = useRef<mapboxgl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  // 1. Inicializar o Mapa
   useEffect(() => {
     if (!tracking || !mapContainer.current) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -49,7 +47,7 @@ export default function DriverPage() {
           type: 'line',
           source: 'route',
           layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 'line-color': '#22c55e', 'line-width': 6, 'line-opacity': 0.9 }
+          paint: { 'line-color': '#22c55e', 'line-width': 6, 'line-opacity': 0.9 } // Linha VERDE
         });
       }
     });
@@ -61,7 +59,6 @@ export default function DriverPage() {
     };
   }, [tracking]);
 
-  // 2. Escutar encomendas pendentes
   useEffect(() => {
     async function fetchOrder() {
       const { data } = await supabase.from('deliveries').select('*').eq('status', 'pending').limit(1);
@@ -79,7 +76,6 @@ export default function DriverPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // 3. Iniciar Turno e GPS
   function startTracking() {
     if (!navigator.geolocation) return;
 
@@ -111,7 +107,6 @@ export default function DriverPage() {
     setTracking(true);
   }
 
-  // 4. Terminar Turno Geral
   function stopTracking() {
     if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
     setTracking(false);
@@ -121,7 +116,7 @@ export default function DriverPage() {
     supabase.from('vehicles').update({ status: 'offline' }).eq('id', MEU_VEICULO_ID);
   }
 
-  // 5. Calcular Rota por Estrada
+  // Direções Mapbox para seguir ruas reais
   async function fetchRoute(startLng: number, startLat: number, endLng: number, endLat: number) {
     try {
       const query = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving/${startLng},${startLat};${endLng},${endLat}?geometries=geojson&access_token=${MAPBOX_TOKEN}`);
@@ -140,7 +135,6 @@ export default function DriverPage() {
     } catch (e) { console.error("Erro na rota", e); }
   }
 
-  // 6. Aceitar Encomenda
   async function handleAcceptOrder() {
     if (!pendingOrder) return;
     await supabase.from('deliveries').update({ status: 'in_progress', driver_id: MEU_VEICULO_ID }).eq('id', pendingOrder.id);
@@ -155,37 +149,28 @@ export default function DriverPage() {
     }
   }
 
-  // 7. Lidar com a Câmera (Foto tirada)
   function handlePhotoCapture(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) {
       const imageUrl = URL.createObjectURL(file);
-      setPhotoPreview(imageUrl); // Mostra o preview da foto
+      setPhotoPreview(imageUrl);
     }
   }
 
-  // 8. Finalizar Definitivamente a Entrega
   async function handleFinishDelivery() {
     if (!activeOrder) return;
-    
-    // Atualizar BD para completed
     await supabase.from('deliveries').update({ status: 'completed' }).eq('id', activeOrder.id);
     
-    // Limpar o mapa e os estados
     if (map.current) {
       const source = map.current.getSource('route') as mapboxgl.GeoJSONSource;
       if (source) source.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } as any);
-      map.current.flyTo({ zoom: 15 }); // Reset zoom
+      map.current.flyTo({ zoom: 15 });
     }
 
     setActiveOrder(null);
     setIsArrived(false);
     setPhotoPreview(null);
   }
-
-  // ==============================
-  // RENDERIZAÇÃO DA UI
-  // ==============================
 
   if (!tracking) {
     return (
@@ -207,13 +192,11 @@ export default function DriverPage() {
     <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
 
-      {/* OVERLAY DE CHEGADA E FOTO (Só aparece quando clica em Cheguei) */}
       {isArrived && (
         <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-6 gap-6 backdrop-blur-md">
           <h2 className="text-2xl font-bold text-white">Prova de Entrega</h2>
           <p className="text-zinc-400 text-center text-sm">Tira uma foto à encomenda ou ao local para comprovares a entrega.</p>
           
-          {/* Mostra a foto se já foi tirada, senão mostra o botão da câmera */}
           {photoPreview ? (
             <img src={photoPreview} alt="Comprovativo" className="w-full max-h-[50vh] object-cover rounded-2xl border-2 border-emerald-500 shadow-2xl" />
           ) : (
@@ -224,7 +207,6 @@ export default function DriverPage() {
             </label>
           )}
 
-          {/* Botão Finalizar - Só fica ativo e verde se houver foto */}
           <button 
             onClick={handleFinishDelivery}
             disabled={!photoPreview}
@@ -236,10 +218,8 @@ export default function DriverPage() {
         </div>
       )}
 
-      {/* UI NORMAL: Pedidos Pendentes / Ativos */}
       {!isArrived && (
         <div className="absolute top-4 inset-x-4 z-10 flex flex-col gap-2">
-          
           {pendingOrder && !activeOrder && (
             <div className="bg-zinc-900/95 backdrop-blur-md border border-amber-500/40 p-4 rounded-2xl shadow-2xl flex flex-col gap-3">
               <div className="flex items-center gap-2 text-amber-400 font-medium text-sm">
@@ -269,7 +249,6 @@ export default function DriverPage() {
         </div>
       )}
 
-      {/* Fundo: Fechar Serviço */}
       <div className="absolute bottom-6 inset-x-4 z-10 flex items-center justify-between bg-zinc-900/90 backdrop-blur-md border border-white/10 p-4 rounded-2xl shadow-2xl">
         <div className="flex items-center gap-2">
           <Wifi className="w-4 h-4 text-emerald-400 animate-pulse" />
