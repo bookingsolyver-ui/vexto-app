@@ -8,10 +8,9 @@ import { Navigation, Package, PowerOff, Wifi, Camera, CheckCircle2, Truck, Car }
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
-// === USA O TEU ID VERDADEIRO E UM NOVO PARA ANGOLA ===
 const VEICULOS_TESTE = [
   { id: LIVE_VEHICLE_ID, displayName: 'Bus 6023', plate: 'L 45623', type: 'bus' },
-  { id: '11111111-2222-3333-4444-555555555555', displayName: 'E-Bus 07 (Angola)', plate: 'L 34654', type: 'bus' },
+  { id: '11111111-2222-3333-4444-555555555555', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
   { id: '22222222-3333-4444-5555-666666666666', displayName: 'Taxi 100', plate: 'T 99887', type: 'car' }
 ];
 
@@ -45,7 +44,6 @@ export default function DriverPage() {
 
     map.current.on('load', () => {
       if (!map.current) return;
-      
       navigator.geolocation.getCurrentPosition((pos) => {
         if (map.current) {
           map.current.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 15, essential: true });
@@ -82,8 +80,13 @@ export default function DriverPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  function startTracking() {
+  async function startTracking() {
     if (!navigator.geolocation || !meuVeiculo) return;
+
+    // REGISTAR O VEÍCULO NA TABELA 'vehicles' ANTES DE ENVIAR O GPS (Evita o erro da Foreign Key)
+    await supabase.from('vehicles').upsert([
+      { id: meuVeiculo.id, display_name: meuVeiculo.displayName, plate: meuVeiculo.plate, status: 'online' }
+    ], { onConflict: 'id' });
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       async (pos) => {
@@ -100,10 +103,6 @@ export default function DriverPage() {
           map.current.easeTo({ center: [longitude, latitude], duration: 1000 });
         }
 
-        // Tenta garantir que o ID existe na tabela 'vehicles' para não dar erro
-        await supabase.from('vehicles').upsert([{ id: meuVeiculo.id }], { onConflict: 'id' });
-
-        // ENVIA A POSIÇÃO E VERIFICA SE HÁ ERROS
         const { error } = await supabase.from('vehicle_positions').insert({
           vehicle_id: meuVeiculo.id, lat: latitude, lng: longitude,
           heading: heading ?? null, speed_kmh: speed ? speed * 3.6 : null,
@@ -111,10 +110,8 @@ export default function DriverPage() {
         });
 
         if (error) {
-          console.error("ERRO SUPABASE:", error);
-          alert("O Supabase rejeitou o GPS: " + error.message); // O teu amigo vai ver este erro se falhar!
+          console.error("Erro GPS:", error);
         } else {
-          // Só conta pacote se a base de dados GUARDAR com sucesso!
           setSentCount((n) => n + 1);
         }
       },
@@ -219,7 +216,6 @@ export default function DriverPage() {
     <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
 
-      {/* COMPROVATIVO DE ENTREGA E BOTÕES (IGUAL AO TEU) */}
       {isArrived && (
         <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-6 gap-6 backdrop-blur-md">
           <h2 className="text-2xl font-bold text-white">Prova de Entrega</h2>
