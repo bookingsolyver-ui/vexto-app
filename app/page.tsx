@@ -2,7 +2,7 @@
 
 import LiveMap from '../components/LiveMap';
 import React, { useEffect, useState } from 'react';
-import { Wifi, ArrowUpRight, Navigation } from 'lucide-react';
+import { Wifi, ArrowUpRight } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { supabase, LiveVehiclePosition } from '../lib/supabaseClient';
 
@@ -21,7 +21,6 @@ export default function Dashboard() {
   const [livePosition, setLivePosition] = useState<LiveVehiclePosition | null>(null);
   const [activeDelivery, setActiveDelivery] = useState<any>(null);
 
-// 1. BUSCAR TODOS OS VEÍCULOS E OUVIR MUDANÇAS EM TEMPO REAL
   useEffect(() => {
     async function fetchVehicles() {
       const { data, error } = await supabase.from('vehicles').select('*');
@@ -37,18 +36,11 @@ export default function Dashboard() {
 
     fetchVehicles();
 
-    // Subscrevemos diretamente a tabela vehicles para qualquer evento (INSERT, UPDATE, DELETE)
-    const vehiclesChannel = supabase
-      .channel('public:vehicles')
+    const vehiclesChannel = supabase.channel('global-vehicles-dashboard')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'vehicles',
-        },
-        (payload) => {
-          console.log('Mudança detetada em vehicles:', payload);
+        { event: '*', schema: 'public', table: 'vehicles' },
+        () => {
           fetchVehicles();
         }
       )
@@ -59,81 +51,43 @@ export default function Dashboard() {
     };
   }, []);
 
-  // 2. ESCUTA DINÂMICA DO GPS DO VEÍCULO SELECIONADO NA BARRA LATERAL
   useEffect(() => {
     if (!selectedVehicleId) return;
 
-    supabase
-      .from('vehicle_positions')
-      .select('*')
-      .eq('vehicle_id', selectedVehicleId)
-      .order('updated_at', { ascending: false })
-      .limit(1)
+    supabase.from('vehicle_positions').select('*').eq('vehicle_id', selectedVehicleId).order('updated_at', { ascending: false }).limit(1)
       .then(({ data }) => {
-        if (data && data.length > 0) {
-          setLivePosition(data[0] as LiveVehiclePosition);
-        } else {
-          setLivePosition(null);
-        }
+        if (data && data.length > 0) setLivePosition(data[0] as LiveVehiclePosition);
+        else setLivePosition(null);
       });
 
-    const channel = supabase
-      .channel(`dynamic-pos-${selectedVehicleId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${selectedVehicleId}` },
-        (payload: any) => {
-          setLivePosition(payload.new);
-        }
-      )
-      .subscribe();
+    const channel = supabase.channel(`pos-${selectedVehicleId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${selectedVehicleId}` },
+        (payload: any) => setLivePosition(payload.new)
+      ).subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [selectedVehicleId]);
 
-  // 3. ESCUTAR ENTREGAS DO VEÍCULO SELECIONADO (Com maybeSingle seguro contra 406)
   useEffect(() => {
-    if (!selectedVehicleId) {
-      setActiveDelivery(null);
-      return;
-    }
-
+    if (!selectedVehicleId) { setActiveDelivery(null); return; }
     const fetchDelivery = async () => {
-      try {
-        const { data } = await supabase
-          .from('deliveries')
-          .select('*')
-          .eq('driver_id', selectedVehicleId)
-          .eq('status', 'in_progress')
-          .maybeSingle();
-        
-        setActiveDelivery(data || null);
-      } catch (err) {
-        setActiveDelivery(null);
-      }
+      const { data } = await supabase.from('deliveries').select('*').eq('driver_id', selectedVehicleId).eq('status', 'in_progress').maybeSingle();
+      setActiveDelivery(data || null);
     };
     fetchDelivery();
-
-    const deliveriesChannel = supabase.channel(`deliveries-${selectedVehicleId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries', filter: `driver_id=eq.${selectedVehicleId}` }, (payload: any) => {
-         if (payload.new && (payload.new.status === 'completed' || payload.new.status === 'cancelled')) {
-           setActiveDelivery(null);
-         } else if (payload.new && payload.new.status === 'in_progress') {
-           setActiveDelivery(payload.new);
-         }
-      }).subscribe();
-
-    return () => { supabase.removeChannel(deliveriesChannel); };
+    const delChannel = supabase.channel(`delivery-${selectedVehicleId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries', filter: `driver_id=eq.${selectedVehicleId}` },
+        (payload: any) => {
+           if (payload.new && (payload.new.status === 'completed' || payload.new.status === 'cancelled')) setActiveDelivery(null);
+           else if (payload.new && payload.new.status === 'in_progress') setActiveDelivery(payload.new);
+        }
+      ).subscribe();
+    return () => { supabase.removeChannel(delChannel); };
   }, [selectedVehicleId]);
 
-// Contadores dinâmicos baseados no status real da base de dados
   const onlineCount = vehicles.filter(v => v.status === 'online').length;
-  const offlineCount = vehicles.filter(v => v.status === 'offline').length;
-  const passengerToday = 142580;
+  const offlineCount = vehicles.filter(v => v.status !== 'online').length;
   const chartData = fallbackPassengerData;
-
   const isLiveGpsActive = livePosition && Date.now() - new Date(livePosition.updated_at).getTime() < 15000;
   const selectedVeh = vehicles.find(v => v.id === selectedVehicleId) || vehicles[0];
 
@@ -154,7 +108,6 @@ export default function Dashboard() {
           <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Routes</span>
           <span className="text-vexto-textMuted text-sm hover:text-white cursor-pointer transition-colors">Analytics</span>
         </div>
-
         {isLiveGpsActive && (
           <div className="glass-panel px-4 py-1.5 rounded-full flex w-fit items-center gap-2 border border-vexto-green/30">
             <span className="w-1.5 h-1.5 rounded-full bg-vexto-green animate-pulse"></span>
@@ -193,11 +146,10 @@ export default function Dashboard() {
           </div>
         </header>
 
-<div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
           <div className="grid grid-cols-2 gap-4">
             {vehicles.map(vehicle => {
               const isOnline = vehicle.status === 'online';
-
               return (
                 <div 
                   key={vehicle.id} 
@@ -261,13 +213,15 @@ export default function Dashboard() {
 
            <div>
               <div className="flex justify-between items-end mb-2">
-                <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest"> Número de Horas Trabalhadas (Hoje)</span>
-                <span className="text-2xl text-functional text-white">{passengerToday.toLocaleString('en-US')}</span>
+                <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Número de Horas Trabalhadas (Hoje)</span>
+                <span className="text-2xl text-functional text-white">
+                  {selectedVeh?.status === 'online' ? '06h 45m' : '05h 30m'}
+                </span>
               </div>
               <div className="h-28 w-full relative mb-3">
                  <ResponsiveContainer width="100%" height="100%">
                    <LineChart data={chartData}>
-                     <Line type="monotone" dataKey="value" stroke="#ffffff" strokeWidth={1.5} dot={{ r: 2, fill: '#ffffff', strokeWidth: 0 }} activeDot={{ r: 4, fill: '#ffffff' }} />
+                     <Line type="monotone" dataKey="value" stroke="#22c55e" strokeWidth={1.5} dot={{ r: 2, fill: '#22c55e', strokeWidth: 0 }} activeDot={{ r: 4, fill: '#22c55e' }} />
                    </LineChart>
                  </ResponsiveContainer>
               </div>
