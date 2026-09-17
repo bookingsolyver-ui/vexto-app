@@ -8,10 +8,11 @@ import { Navigation, Package, PowerOff, Wifi, Camera, CheckCircle2, Truck, Car }
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
+// === CORREÇÃO: IDs NO FORMATO UUID REAL PARA O SUPABASE ACEITAR! ===
 const VEICULOS_TESTE = [
   { id: 'a708d088-4dff-4a95-8475-854b76a5295a', displayName: 'Bus 6023', plate: 'L 45623', type: 'bus' },
-  { id: 'e-bus-07-teste-id', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
-  { id: 'taxi-100-teste-id', displayName: 'Taxi 100', plate: 'T 99887', type: 'car' }
+  { id: '123e4567-e89b-12d3-a456-426614174000', displayName: 'E-Bus 07', plate: 'L 34654', type: 'bus' },
+  { id: '987e6543-e21b-34d3-b890-426614174000', displayName: 'Taxi 100', plate: 'T 99887', type: 'car' }
 ];
 
 export default function DriverPage() {
@@ -44,6 +45,14 @@ export default function DriverPage() {
 
     map.current.on('load', () => {
       if (!map.current) return;
+      
+      // Assim que o mapa carrega, pede logo a localização para não ficar preso em Portugal!
+      navigator.geolocation.getCurrentPosition((pos) => {
+        if (map.current) {
+          map.current.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 15, essential: true });
+        }
+      });
+
       if (!map.current.getSource('route')) {
         map.current.addSource('route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [] } } });
         map.current.addLayer({
@@ -86,24 +95,25 @@ export default function DriverPage() {
             const el = document.createElement('div');
             el.className = 'w-5 h-5 bg-emerald-500 rounded-full border-2 border-white shadow-[0_0_15px_rgba(34,197,94,0.9)] animate-pulse';
             markerRef.current = new mapboxgl.Marker(el).setLngLat([longitude, latitude]).addTo(map.current);
-            
-            // ===============================================
-            // CORREÇÃO: Fazer o ecrã voar para Angola / Localização Real
-            // ===============================================
-            map.current.flyTo({ center: [longitude, latitude], zoom: 15, essential: true });
-
           } else {
             markerRef.current.setLngLat([longitude, latitude]);
           }
+          
+          // === EFEITO WAZE ===
+          // A câmara persegue o motorista automaticamente para onde quer que ele vá!
+          map.current.easeTo({ center: [longitude, latitude], duration: 1000 });
         }
 
-        await supabase.from('vehicle_positions').insert({
-          vehicle_id: meuVeiculo.id, lat: latitude, lng: longitude,
-          heading: heading ?? null, speed_kmh: speed ? speed * 3.6 : null,
-          updated_at: new Date().toISOString(),
-        });
-        
-        setSentCount((n) => n + 1);
+        try {
+          await supabase.from('vehicle_positions').insert({
+            vehicle_id: meuVeiculo.id, lat: latitude, lng: longitude,
+            heading: heading ?? null, speed_kmh: speed ? speed * 3.6 : null,
+            updated_at: new Date().toISOString(),
+          });
+          setSentCount((n) => n + 1);
+        } catch (error) {
+          console.error("Erro ao enviar GPS:", error);
+        }
       },
       (err) => console.error(err),
       { enableHighAccuracy: true }
@@ -138,7 +148,6 @@ export default function DriverPage() {
     await supabase.from('deliveries').update({ status: 'in_progress', driver_id: meuVeiculo.id }).eq('id', pendingOrder.id);
     setActiveOrder(pendingOrder);
     setPendingOrder(null);
-
     if (map.current && markerRef.current) {
       const pos = markerRef.current.getLngLat();
       fetchRoute(pos.lng, pos.lat, pendingOrder.dropoff_lng || -9.3000, pendingOrder.dropoff_lat || 38.7070);
@@ -211,7 +220,6 @@ export default function DriverPage() {
         <div className="absolute inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-6 gap-6 backdrop-blur-md">
           <h2 className="text-2xl font-bold text-white">Prova de Entrega</h2>
           <p className="text-zinc-400 text-center text-sm">Tira uma foto à encomenda ou ao local para comprovares a entrega.</p>
-          
           {photoPreview ? (
             <img src={photoPreview} alt="Comprovativo" className="w-full max-h-[50vh] object-cover rounded-2xl border-2 border-emerald-500 shadow-2xl" />
           ) : (
@@ -221,7 +229,6 @@ export default function DriverPage() {
               <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhotoCapture} />
             </label>
           )}
-
           <button onClick={handleFinishDelivery} disabled={!photoPreview} className={`w-full max-w-sm py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-xl ${photoPreview ? 'bg-emerald-500 hover:bg-emerald-600 text-black' : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}`}>
             <CheckCircle2 className="w-6 h-6" /> FINALIZAR ENTREGA
           </button>

@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Wifi, ArrowUpRight, Navigation, AlertTriangle, AlertCircle } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { useFleetStore } from '../store/useFleetStore';
-import { supabase, LIVE_VEHICLE_ID, LiveVehiclePosition } from '../lib/supabaseClient';
+import { supabase, LiveVehiclePosition } from '../lib/supabaseClient';
 
 const fallbackPassengerData = [
   { time: '06:00', value: 45 },
@@ -16,17 +16,22 @@ const fallbackPassengerData = [
   { time: '21:00', value: 48 },
 ];
 
+// === LISTA DE VEÍCULOS COM OS UUIDs REAIS PARA O TESTE INTERNACIONAL ===
+const TEST_VEHICLES = [
+  { id: 'a708d088-4dff-4a95-8475-854b76a5295a', displayName: 'Bus 6023', plate: 'L 45623', status: 'online', passengerLoadPct: 82, signals: { gps: true, lte: true }, lastUpdate: '2026-09-17T20:00:00Z' },
+  { id: '123e4567-e89b-12d3-a456-426614174000', displayName: 'E-Bus 07', plate: 'L 34654', status: 'online', passengerLoadPct: 45, signals: { gps: true, lte: true }, lastUpdate: '2026-09-17T20:00:00Z' },
+  { id: '987e6543-e21b-34d3-b890-426614174000', displayName: 'Taxi 100', plate: 'T 99887', status: 'offline', passengerLoadPct: 0, signals: { gps: false, lte: false }, lastUpdate: '2026-09-17T20:00:00Z' }
+];
+
 export default function Dashboard() {
   const [livePosition, setLivePosition] = useState<LiveVehiclePosition | null>(null);
   
-  // ESTADO QUE CONTROLA O VEÍCULO SELECIONADO (Barra Lateral <-> Mapa)
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(LIVE_VEHICLE_ID);
+  // Inicia com o UUID do Bus 6023
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>('a708d088-4dff-4a95-8475-854b76a5295a');
   
-  // NOVO ESTADO: Controla se o veículo selecionado tem uma entrega a decorrer
   const [activeDelivery, setActiveDelivery] = useState<any>(null);
 
   const {
-    vehicles,
     overview,
     passengerVolume,
     efficiency,
@@ -40,11 +45,14 @@ export default function Dashboard() {
     return () => stopLiveUpdates();
   }, []);
 
+  // AGORA OUVE O GPS DO VEÍCULO SELECIONADO NA BARRA LATERAL (Portugal ou Angola)
   useEffect(() => {
+    if (!selectedVehicleId) return;
+
     supabase
       .from('vehicle_positions')
       .select('*')
-      .eq('vehicle_id', LIVE_VEHICLE_ID)
+      .eq('vehicle_id', selectedVehicleId)
       .order('updated_at', { ascending: false })
       .limit(1)
       .then(({ data }) => {
@@ -52,10 +60,10 @@ export default function Dashboard() {
       });
 
     const channel = supabase
-      .channel('vehicle-positions-changes')
+      .channel(`pos-${selectedVehicleId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${LIVE_VEHICLE_ID}` },
+        { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${selectedVehicleId}` },
         (payload) => {
           setLivePosition(payload.new as any);
         }
@@ -63,9 +71,8 @@ export default function Dashboard() {
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [selectedVehicleId]);
 
-  // NOVA LÓGICA: Escutar as entregas do veículo que o Gestor clicou
   useEffect(() => {
     if (!selectedVehicleId) {
       setActiveDelivery(null);
@@ -97,8 +104,8 @@ export default function Dashboard() {
 
   const isLiveGpsActive = livePosition && Date.now() - new Date(livePosition.updated_at).getTime() < 15000;
 
-  // Encontrar os dados do veículo selecionado para colocar no título do painel
-  const selectedVeh = vehicles.find(v => v.id === selectedVehicleId) || vehicles[0];
+  // Busca a info do veículo selecionado na nossa nova lista
+  const selectedVeh = TEST_VEHICLES.find(v => v.id === selectedVehicleId) || TEST_VEHICLES[0];
 
   return (
     <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg">
@@ -186,12 +193,12 @@ export default function Dashboard() {
         {/* LISTA DE VEÍCULOS (CLICÁVEL) */}
         <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
           <div className="grid grid-cols-2 gap-4">
-            {vehicles.map(vehicle => (
+            {TEST_VEHICLES.map(vehicle => (
               
               <div 
                 key={vehicle.id} 
                 onClick={() => setSelectedVehicleId(vehicle.id)}
-                className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5' : 'border-white/5 hover:border-white/20'}`}
+                className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5 shadow-[0_0_15px_rgba(34,197,94,0.1)]' : 'border-white/5 hover:border-white/20'}`}
               >
                 
                 <div className="flex justify-between items-start">
@@ -326,7 +333,6 @@ export default function Dashboard() {
 
         {/* ====================================================== */}
         {/* MÓDULO DINÂMICO (Volume de Passageiros / Em Entrega)   */}
-        {/* Mantém as tuas cores e as tuas classes 'glass-panel'   */}
         {/* ====================================================== */}
         <div className="glass-panel w-120 p-6 pointer-events-auto border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col justify-between">
            
