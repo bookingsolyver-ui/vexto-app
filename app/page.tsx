@@ -1,11 +1,10 @@
 "use client";
 
 import LiveMap from '../components/LiveMap';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Wifi, ArrowUpRight, Navigation, AlertTriangle, AlertCircle } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { useFleetStore } from '../store/useFleetStore';
-import { STOPS } from '../lib/mockData';
 import { supabase, LIVE_VEHICLE_ID, LiveVehiclePosition } from '../lib/supabaseClient';
 
 const fallbackPassengerData = [
@@ -17,18 +16,11 @@ const fallbackPassengerData = [
   { time: '21:00', value: 48 },
 ];
 
-function formatCompactUsd(value: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    notation: 'compact',
-    maximumFractionDigits: 1,
-  }).format(value);
-}
-
 export default function Dashboard() {
-  const [livePosition, setLivePosition] = React.useState<LiveVehiclePosition | null>(null);
-  const [isWidgetOpen, setIsWidgetOpen] = React.useState(false);
+  const [livePosition, setLivePosition] = useState<LiveVehiclePosition | null>(null);
+  
+  // ESTADO QUE CONTROLA O VEÍCULO SELECIONADO (Barra Lateral <-> Mapa)
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(LIVE_VEHICLE_ID);
 
   const {
     vehicles,
@@ -46,9 +38,6 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    // Variável temporária para a rota da IA
-    const routeCoordinates: [number, number][] = []; 
-
     supabase
       .from('vehicle_positions')
       .select('*')
@@ -65,33 +54,14 @@ export default function Dashboard() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${LIVE_VEHICLE_ID}` },
         (payload) => {
-          const newPos = payload.new as any; 
-          setLivePosition(newPos);
-
-          // === CONTROLO DE DESVIO DA IA SEGURO ===
-          const currentLon = newPos.longitude ?? newPos.lng;
-          const currentLat = newPos.latitude ?? newPos.lat;
-
-          if (currentLon && currentLat && routeCoordinates.length > 0) {
-            const saiuDoTrajeto = checkRouteDeviation(
-              [currentLon, currentLat], 
-              routeCoordinates
-            );
-
-            if (saiuDoTrajeto) {
-              console.warn("⚠️ ALERTA: Motorista desviou-se da linha branca da IA!");
-            }
-          }
+          setLivePosition(payload.new as any);
         }
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const featuredVehicle = vehicles.find((v) => v.status === 'online') ?? vehicles[0];
   const onlineCount = overview?.onlineCount ?? 12;
   const offlineCount = overview?.offlineCount ?? 4;
   const passengerToday = passengerVolume?.todayTotal ?? 142580;
@@ -102,11 +72,10 @@ export default function Dashboard() {
   return (
     <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg">
 
-      {/* ========================================== */}
-      {/* O MAPA INTERATIVO NO FUNDO (Onde entra o LiveMap) */}
-      {/* ========================================== */}
+      {/* O MAPA INTERATIVO NO FUNDO */}
       <div className="absolute inset-0 z-0">
-        <LiveMap />
+        {/* MAPA LIGADO AO ESTADO DE SELEÇÃO */}
+        <LiveMap selectedVehicleId={selectedVehicleId} onSelectVehicle={setSelectedVehicleId} />
         <div className="absolute inset-0 bg-vexto-bg/40 pointer-events-none"></div>
       </div>
 
@@ -133,35 +102,9 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* WIDGET FLUTUANTE NO MAPA (Passenger Load) */}
-      {featuredVehicle && isWidgetOpen && (
-        <div
-          className="absolute z-20 pointer-events-none top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2"
-        >
-          <div>
-            <div className="glass-panel p-5 rounded-2xl flex flex-col gap-2 border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] pointer-events-auto relative">
-              <div className="absolute -top-3 -right-3 cursor-pointer p-1 rounded-full bg-vexto-bg border border-white/10 text-vexto-textMuted hover:text-white transition-colors" onClick={() => setIsWidgetOpen(false)}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-              </div>
-              <div className="flex justify-between items-start gap-8">
-                <div>
-                  <h3 className="text-vexto-textMuted text-sm font-medium">Passenger Load</h3>
-                  <p className="text-vexto-textMuted text-xs">GPS real</p>
-                </div>
-                <ArrowUpRight className="text-white w-4 h-4" />
-              </div>
-              <div className="text-5xl text-functional text-white mt-1">
-                {Math.round(featuredVehicle.passengerLoadPct)}%
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* NOVA BARRA LATERAL (COMMAND CENTER) */}
       <div className="glass-panel w-105 h-full rounded-none relative z-10 flex flex-col bg-vexto-bg/80 backdrop-blur-xl border-y-0 border-l-0 border-r border-white/5 overflow-hidden">
         
-        {/* Cabeçalho */}
         <header className="p-8 pb-6 shrink-0">
           <div className="flex items-center gap-3 mb-8">
             <div className="flex gap-0.5 transform -rotate-45">
@@ -173,7 +116,6 @@ export default function Dashboard() {
             <h1 className="text-2xl font-medium tracking-tight text-white">Vexto</h1>
           </div>
 
-          {/* Filtros de Frota */}
           <div className="grid grid-cols-4 gap-2 mb-8">
             <button className="glass-panel px-3 py-2 rounded-full border border-white/10 text-white text-xs font-medium hover:bg-white/5 transition-colors cursor-pointer">24 Bus</button>
             <button className="glass-panel px-3 py-2 rounded-full border border-transparent text-vexto-textMuted text-xs font-medium hover:text-white transition-colors cursor-pointer">100 Taxi</button>
@@ -181,7 +123,6 @@ export default function Dashboard() {
             <button className="glass-panel px-3 py-2 rounded-full border border-transparent text-vexto-textMuted text-xs font-medium hover:text-white transition-colors cursor-pointer">13 Trams</button>
           </div>
 
-          {/* Estado da Frota */}
           <div className="flex gap-4 mb-8">
             <div className="flex-1 glass-panel px-5 py-4 rounded-2xl flex flex-col gap-1 border border-white/5">
               <div className="flex items-center gap-2">
@@ -199,7 +140,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Eficiência Operacional */}
           <div className="flex flex-col gap-2 mb-2">
             <div className="flex justify-between items-end">
               <span className="text-vexto-textMuted text-xs">Operational Efficiency</span>
@@ -213,17 +153,22 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* Lista de Veículos (Tracking Pods) */}
+        {/* LISTA DE VEÍCULOS (CLICÁVEL) */}
         <div className="flex-1 overflow-y-auto px-8 pb-8 custom-scrollbar">
           <div className="grid grid-cols-2 gap-4">
             {vehicles.map(vehicle => (
-              <div key={vehicle.id} className="glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer hover:border-white/20">
+              
+              <div 
+                key={vehicle.id} 
+                onClick={() => setSelectedVehicleId(vehicle.id)}
+                className={`glass-pod p-4 flex flex-col gap-3 relative overflow-hidden group cursor-pointer transition-all border ${selectedVehicleId === vehicle.id ? 'border-vexto-green bg-vexto-green/5' : 'border-white/5 hover:border-white/20'}`}
+              >
                 
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="text-white text-sm font-medium tracking-tight">{vehicle.displayName}</h3>
                     <p className="text-vexto-textMuted text-[10px] mt-0.5 opacity-60">
-                      {new Date(vehicle.lastUpdate).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      {new Date(vehicle.lastUpdate).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
                   <ArrowUpRight className="text-vexto-textMuted w-4 h-4 group-hover:text-white transition-colors" />
@@ -234,7 +179,7 @@ export default function Dashboard() {
                     <span className="text-vexto-textMuted text-[10px]">L</span>
                     <span className="text-white text-xs tracking-widest font-medium uppercase">{vehicle.plate}</span>
                   </div>
-<div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_49%,rgba(255,255,255,0.03)_50%,transparent_51%)]" style={{ backgroundSize: '10px 100%' }}></div>
+                  <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_49%,rgba(255,255,255,0.03)_50%,transparent_51%)]" style={{ backgroundSize: '10px 100%' }}></div>
                   <div className="absolute inset-0 bg-linear-to-b from-transparent to-black/80"></div>
                 </div>
 
@@ -283,14 +228,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* WIDGET DE CONTROLOS DO MAPA (Flutua ao lado da Sidebar) */}
+      {/* WIDGET DE CONTROLOS DO MAPA */}
       <div className="absolute bottom-8 left-112.5 z-20 glass-panel px-5 py-2.5 rounded-full flex items-center gap-5 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] pointer-events-auto">
         <button className="text-vexto-textMuted hover:text-white transition-colors cursor-pointer">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></svg>
         </button>
-        
         <div className="w-px h-4 bg-white/10"></div>
-        
         <button className="text-white transition-colors cursor-pointer">
           <div className="flex gap-0.5 transform -rotate-45">
             <div className="w-0.5 h-3 bg-white rounded-full"></div>
@@ -299,18 +242,16 @@ export default function Dashboard() {
             <div className="w-0.5 h-2 bg-white rounded-full -mt-0.5"></div>
           </div>
         </button>
-
         <div className="w-px h-4 bg-white/10"></div>
-
         <button className="text-vexto-textMuted hover:text-white transition-colors cursor-pointer">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         </button>
       </div>
 
-      {/* PAINÉIS INFERIORES DIREITOS (Schedule Offset & Volume) */}
+      {/* PAINÉIS INFERIORES DIREITOS */}
       <div className="absolute bottom-8 right-8 z-20 flex items-end gap-6 pointer-events-none">
 
-        {/* Módulo: Schedule Offset (Tabela de Atrasos) */}
+        {/* Schedule Offset */}
         <div className="glass-panel w-105 p-6 pointer-events-auto flex flex-col gap-5 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
           <div className="flex justify-between items-start">
              <div>
@@ -353,7 +294,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Módulo: Live Passenger Volume */}
+        {/* Live Passenger Volume */}
         <div className="glass-panel w-120 p-6 pointer-events-auto border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
            <div className="flex justify-between items-start mb-6">
               <div>
@@ -391,88 +332,6 @@ export default function Dashboard() {
            </div>
         </div>
       </div>
-
     </main>
   );
-}
-
-// ==========================================
-// 1. FUNÇÃO PARA DESENHAR A LINHA BRANCA
-// ==========================================
-async function fetchAndDrawRoute(map: any, startCoords: [number, number], endCoords: [number, number], token: string) {
-  const query = await fetch(
-    `https://api.mapbox.com/directions/v5/mapbox/driving/${startCoords[0]},${startCoords[1]};${endCoords[0]},${endCoords[1]}?geometries=geojson&access_token=${token}`
-  );
-  const json = await query.json();
-  
-  if (!json.routes || json.routes.length === 0) return;
-  
-  const routeGeoJSON = json.routes[0].geometry;
-
-  if (map.getSource('route')) {
-    map.getSource('route').setData({
-      type: 'Feature',
-      properties: {},
-      geometry: routeGeoJSON
-    });
-  } else {
-    map.addSource('route', {
-      type: 'geojson',
-      data: {
-        type: 'Feature',
-        properties: {},
-        geometry: routeGeoJSON
-      }
-    });
-
-    map.addLayer({
-      id: 'route-line',
-      type: 'line',
-      source: 'route',
-      layout: {
-        'line-join': 'round',
-        'line-cap': 'round'
-      },
-      paint: {
-        'line-color': '#ffffff', 
-        'line-width': 5,
-        'line-opacity': 0.85
-      }
-    });
-  }
-}
-
-// ==========================================
-// 2. FUNÇÕES DE CÁLCULO E ALERTA DE DESVIO
-// ==========================================
-function getDistanceFromLatLonInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371000; // Raio da Terra em metros
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
-function checkRouteDeviation(driverCurrentPos: [number, number], routeCoordinates: [number, number][]) {
-  const THRESHOLD_METERS = 100; // Limite de tolerância de desvio (100 metros)
-  
-  let minDistance = Infinity;
-  for (const coord of routeCoordinates) {
-    const dist = getDistanceFromLatLonInMeters(
-      driverCurrentPos[1], driverCurrentPos[0], 
-      coord[1], coord[0]
-    );
-    if (dist < minDistance) {
-      minDistance = dist;
-    }
-  }
-
-  if (minDistance > THRESHOLD_METERS) {
-    return true; 
-  }
-  return false;
 }
