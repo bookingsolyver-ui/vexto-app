@@ -1,10 +1,9 @@
 "use client";
 
+import LiveMap from '../components/LiveMap';
 import React, { useEffect, useRef } from 'react';
 import { Wifi, ArrowUpRight, Navigation, AlertTriangle, AlertCircle } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
 import { useFleetStore } from '../store/useFleetStore';
 import { STOPS } from '../lib/mockData';
 import { supabase, LIVE_VEHICLE_ID, LiveVehiclePosition } from '../lib/supabaseClient';
@@ -28,13 +27,8 @@ function formatCompactUsd(value: number): string {
 }
 
 export default function Dashboard() {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<mapboxgl.Map | null>(null);
-  const [mapReady, setMapReady] = React.useState(false);
   const [livePosition, setLivePosition] = React.useState<LiveVehiclePosition | null>(null);
-  const [markerScreenPos, setMarkerScreenPos] = React.useState<{ x: number; y: number } | null>(null);
   const [isWidgetOpen, setIsWidgetOpen] = React.useState(false);
-  const liveMarker = useRef<mapboxgl.Marker | null>(null);
 
   const {
     vehicles,
@@ -51,8 +45,8 @@ export default function Dashboard() {
     return () => stopLiveUpdates();
   }, []);
 
-useEffect(() => {
-    // Variável temporária para a rota da IA (podes substituir pelos pontos reais depois)
+  useEffect(() => {
+    // Variável temporária para a rota da IA
     const routeCoordinates: [number, number][] = []; 
 
     supabase
@@ -71,11 +65,10 @@ useEffect(() => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'vehicle_positions', filter: `vehicle_id=eq.${LIVE_VEHICLE_ID}` },
         (payload) => {
-          const newPos = payload.new as any; // Usar 'any' evita conflitos de nomes de propriedades
+          const newPos = payload.new as any; 
           setLivePosition(newPos);
 
           // === CONTROLO DE DESVIO DA IA SEGURO ===
-          // Usamos newPos.lng ou newPos.longitude conforme o que a base de dados envia
           const currentLon = newPos.longitude ?? newPos.lng;
           const currentLat = newPos.latitude ?? newPos.lat;
 
@@ -104,133 +97,16 @@ useEffect(() => {
   const passengerToday = passengerVolume?.todayTotal ?? 142580;
   const chartData = passengerVolume?.series ?? fallbackPassengerData;
 
-  useEffect(() => {
-    if (map.current) return;
-
-   mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
-
-    if (mapContainer.current) {
-        map.current = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/dark-v11',
-        center: [-9.3082, 38.6916], // <-- CENTRADO EM OEIRAS DE RAIZ
-        zoom: 13,
-        pitch: 55,
-        bearing: -15,
-        attributionControl: false
-      });
-
-      map.current.on('style.load', () => {
-        if (!map.current) return;
-        map.current.addSource('route', {
-          'type': 'geojson',
-          'data': {
-            'type': 'Feature',
-            'properties': {},
-            'geometry': {
-              'type': 'LineString',
-              'coordinates': [[-122.4194, 37.7749], [-122.4194, 37.7749]]
-            }
-          }
-        });
-
-        map.current.addLayer({
-          'id': 'route-glow',
-          'type': 'line',
-          'source': 'route',
-          'layout': { 'line-join': 'round', 'line-cap': 'round' },
-          'paint': { 'line-color': '#ffffff', 'line-width': 12, 'line-opacity': 0.15, 'line-blur': 8 }
-        });
-
-        map.current.addLayer({
-          'id': 'route-line',
-          'type': 'line',
-          'source': 'route',
-          'layout': { 'line-join': 'round', 'line-cap': 'round', 'line-dasharray': [2, 4] } as any,
-          'paint': { 'line-color': '#ffffff', 'line-width': 2, 'line-opacity': 0.9 }
-        });
-
-        setMapReady(true);
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!mapReady || !map.current || !featuredVehicle) return;
-    const destination = STOPS[featuredVehicle.nextStop];
-    if (!destination) return;
-    const origin = featuredVehicle.position;
-
-    async function fetchRoute() {
-      try {
-        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?geometries=geojson&access_token=${mapboxgl.accessToken}`;
-        const res = await fetch(url);
-        const data = await res.json();
-        const routeGeometry = data.routes?.[0]?.geometry;
-        if (!routeGeometry || !map.current) return;
-
-        const source = map.current.getSource('route') as mapboxgl.GeoJSONSource | undefined;
-        source?.setData({ type: 'Feature', properties: {}, geometry: routeGeometry });
-      } catch (err) {
-        console.error('Erro ao obter rota:', err);
-      }
-    }
-    fetchRoute();
-  }, [mapReady, featuredVehicle?.id, featuredVehicle?.nextStop]);
-
-useEffect(() => {
-    if (!mapReady || !map.current || !livePosition) return;
-
-    // Forçar a ordem correta para o Mapbox: [longitude, latitude]
-    const lngLat: [number, number] = [Number(livePosition.lng), Number(livePosition.lat)];
-
-    if (!liveMarker.current) {
-      const el = document.createElement('div');
-      el.style.width = '20px';
-      el.style.height = '20px';
-      el.style.borderRadius = '50%';
-      el.style.background = '#22c55e';
-      el.style.border = '3px solid white';
-      el.style.boxShadow = '0 0 15px rgba(34,197,94,0.9)';
-      el.style.cursor = 'pointer'; 
-      
-      el.addEventListener('click', () => {
-        setIsWidgetOpen((prev) => !prev);
-      });
-
-      liveMarker.current = new mapboxgl.Marker({ element: el })
-        .setLngLat(lngLat)
-        .addTo(map.current);
-
-      map.current.flyTo({
-        center: lngLat,
-        zoom: 15,
-        essential: true,
-      });
-    } else {
-      liveMarker.current.setLngLat(lngLat);
-    }
-
-    const updateScreenPos = () => {
-      if (!map.current || !livePosition) return;
-      const point = map.current.project(lngLat);
-      setMarkerScreenPos({ x: point.x, y: point.y });
-    };
-    updateScreenPos();
-    map.current.on('move', updateScreenPos);
-    return () => {
-      map.current?.off('move', updateScreenPos);
-    };
-  }, [mapReady, livePosition]);
-
   const isLiveGpsActive = livePosition && Date.now() - new Date(livePosition.updated_at).getTime() < 15000;
 
   return (
     <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg">
 
-      {/* O MAPA INTERATIVO NO FUNDO */}
+      {/* ========================================== */}
+      {/* O MAPA INTERATIVO NO FUNDO (Onde entra o LiveMap) */}
+      {/* ========================================== */}
       <div className="absolute inset-0 z-0">
-        <div ref={mapContainer} className="w-full h-full" />
+        <LiveMap />
         <div className="absolute inset-0 bg-vexto-bg/40 pointer-events-none"></div>
       </div>
 
@@ -257,19 +133,10 @@ useEffect(() => {
         )}
       </div>
 
-      {/* WIDGET FLUTUANTE NO MAPA (Passenger Load - Abre ao clicar no marcador verde) */}
+      {/* WIDGET FLUTUANTE NO MAPA (Passenger Load) */}
       {featuredVehicle && isWidgetOpen && (
         <div
-          className="absolute z-20 pointer-events-none"
-          style={
-            markerScreenPos
-              ? {
-                  left: markerScreenPos.x,
-                  top: markerScreenPos.y,
-                  transform: 'translate(-50%, -130%)',
-                }
-              : undefined
-          }
+          className="absolute z-20 pointer-events-none top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2"
         >
           <div>
             <div className="glass-panel p-5 rounded-2xl flex flex-col gap-2 border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] pointer-events-auto relative">
@@ -567,7 +434,7 @@ async function fetchAndDrawRoute(map: any, startCoords: [number, number], endCoo
         'line-cap': 'round'
       },
       paint: {
-        'line-color': '#ffffff', // Linha branca do trajeto
+        'line-color': '#ffffff', 
         'line-width': 5,
         'line-opacity': 0.85
       }
@@ -605,7 +472,7 @@ function checkRouteDeviation(driverCurrentPos: [number, number], routeCoordinate
   }
 
   if (minDistance > THRESHOLD_METERS) {
-    return true; // Dispara o alerta visual no dashboard do gestor se sair mais de 100m da linha
+    return true; 
   }
   return false;
 }
