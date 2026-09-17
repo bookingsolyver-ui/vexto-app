@@ -261,7 +261,7 @@ export default function Dashboard() {
 
            <div>
               <div className="flex justify-between items-end mb-2">
-                <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Volume de Passageiros (Hoje)</span>
+                <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest"> Número de Horas Trabalhadas (Hoje)</span>
                 <span className="text-2xl text-functional text-white">{passengerToday.toLocaleString('en-US')}</span>
               </div>
               <div className="h-28 w-full relative mb-3">

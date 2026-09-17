@@ -29,8 +29,13 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
       zoom: 12,
     });
 
-    // FUNÇÃO PARA BUSCAR TUDO O QUE ESTÁ NA BASE DE DADOS AGORA MESMO
     async function forceFetchAllPositions() {
+      const { data: vehiclesData } = await supabase.from('vehicles').select('id, status');
+      const statusMap = new Map();
+      vehiclesData?.forEach((v: any) => {
+        statusMap.set(v.id, String(v.status).trim().toLowerCase());
+      });
+
       const { data, error } = await supabase.from('vehicle_positions').select('*');
       
       if (error) {
@@ -39,18 +44,16 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
       }
 
       if (data && data.length > 0) {
-        console.log("POSIÇÕES ENCONTRADAS NA BD:", data);
         data.forEach((pos: any) => {
-          updateMarker(pos);
+          const vehicleStatus = statusMap.get(pos.vehicle_id);
+          const isOnline = vehicleStatus === 'online';
+          updateMarker(pos, isOnline);
         });
-      } else {
-        console.warn("A tabela vehicle_positions está vazia ou inacessível!");
       }
     }
 
     forceFetchAllPositions();
 
-    // INTERVALO DE SEGURANÇA: Atualiza o mapa a cada 3 segundos indo buscar diretamente à BD
     const interval = setInterval(() => {
       forceFetchAllPositions();
     }, 3000);
@@ -62,17 +65,26 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
     };
   }, []);
 
-  function updateMarker(position: any) {
+  function updateMarker(position: any, isOnline: boolean) {
     if (!map.current) return;
     const { vehicle_id, lat, lng } = position;
     if (!lat || !lng) return;
 
     if (!markersRef.current[vehicle_id]) {
       const container = document.createElement('div');
-      container.className = 'flex items-center justify-center w-8 h-8 cursor-pointer'; 
+      container.className = 'flex items-center justify-center w-10 h-10 cursor-pointer relative'; 
       
+      if (isOnline) {
+        const pingDot = document.createElement('div');
+        pingDot.className = 'absolute w-8 h-8 bg-vexto-green rounded-full opacity-75 animate-ping';
+        container.appendChild(pingDot);
+      }
+
       const dot = document.createElement('div');
-      dot.className = 'w-4 h-4 bg-emerald-500 rounded-full border-2 border-white shadow-[0_0_15px_rgba(34,197,94,1)] animate-pulse';
+      // ONLINE = Verde brilhante com sombra | OFFLINE = Cinzento estático claro
+      dot.className = isOnline 
+        ? 'w-4 h-4 bg-vexto-green rounded-full border-2 border-white shadow-[0_0_25px_rgba(34,197,94,1)] relative z-10'
+        : 'w-3.5 h-3.5 bg-zinc-600 rounded-full border-2 border-zinc-400 relative z-10';
       container.appendChild(dot);
       
       const marker = new mapboxgl.Marker(container).setLngLat([lng, lat]).addTo(map.current);
@@ -83,11 +95,26 @@ export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: L
         onSelectVehicle(vehicle_id);
       });
     } else {
-      markersRef.current[vehicle_id].setLngLat([lng, lat]);
+      const marker = markersRef.current[vehicle_id];
+      marker.setLngLat([lng, lat]);
+      
+      const container = marker.getElement();
+      container.innerHTML = '';
+      
+      if (isOnline) {
+        const pingDot = document.createElement('div');
+        pingDot.className = 'absolute w-8 h-8 bg-vexto-green rounded-full opacity-75 animate-ping';
+        container.appendChild(pingDot);
+      }
+
+      const dot = document.createElement('div');
+      dot.className = isOnline 
+        ? 'w-4 h-4 bg-vexto-green rounded-full border-2 border-white shadow-[0_0_25px_rgba(34,197,94,1)] relative z-10'
+        : 'w-3.5 h-3.5 bg-zinc-600 rounded-full border-2 border-zinc-400 relative z-10';
+      container.appendChild(dot);
     }
   }
 
-// Quando clicas num veículo na barra lateral, o mapa foca-se na última posição exata dele
   useEffect(() => {
     if (!selectedVehicleId || !map.current) return;
 
