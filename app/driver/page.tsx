@@ -3,8 +3,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { supabase } from '../../lib/supabaseClient';
-import { Navigation, PowerOff, Wifi, Truck, PlusCircle, Check } from 'lucide-react';
+import { supabase } from '../../lib/supabaseClient'; // Ajusta o caminho se necessário
+import { Navigation, PowerOff, Wifi, Truck, PlusCircle, Signal } from 'lucide-react';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
@@ -63,13 +63,14 @@ export default function DriverPage() {
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [-9.3235, 38.6826],
       zoom: 15,
+      pitch: 45, // Dá um ângulo 3D estilo navegação
     });
 
     map.current.on('load', () => {
       if (!map.current) return;
       navigator.geolocation.getCurrentPosition((pos) => {
         if (map.current) {
-          map.current.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 15, essential: true });
+          map.current.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 16, essential: true });
         }
       });
     });
@@ -94,7 +95,7 @@ export default function DriverPage() {
         if (map.current) {
           if (!markerRef.current) {
             const el = document.createElement('div');
-            el.className = 'w-5 h-5 bg-emerald-500 rounded-full border-2 border-white shadow-[0_0_15px_rgba(34,197,94,0.9)] animate-pulse';
+            el.className = 'w-6 h-6 bg-vexto-green rounded-full border-2 border-white shadow-[0_0_20px_rgba(34,197,94,1)] animate-pulse';
             markerRef.current = new mapboxgl.Marker(el).setLngLat([longitude, latitude]).addTo(map.current);
           } else {
             markerRef.current.setLngLat([longitude, latitude]);
@@ -132,44 +133,49 @@ export default function DriverPage() {
   // Ecrã 1: Escolher veículo existente ou criar novo
   if (!selectedVehicle) {
     return (
-      <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 font-sans gap-6">
-        <div className="flex flex-col items-center gap-1 text-center">
-          <h1 className="text-3xl font-bold tracking-tight">Vexto Driver</h1>
-          <p className="text-zinc-500 text-sm">Seleciona o teu veículo ou cadastra um novo</p>
+      <main className="min-h-screen bg-vexto-bg text-white flex flex-col items-center justify-center p-6 gap-8">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10 mb-2">
+            <Truck className="w-6 h-6 text-white" />
+          </div>
+          <h1 className="text-3xl font-medium tracking-tight">Vexto Driver</h1>
+          <p className="text-vexto-textMuted text-sm">Selecione o seu veículo de frota</p>
         </div>
 
         {isRegisteringNew ? (
-          <form onSubmit={handleCreateNewVehicle} className="w-full max-w-sm flex flex-col gap-4 bg-zinc-900/80 p-6 rounded-2xl border border-zinc-800">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-emerald-400">Novo Veículo</h2>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-zinc-400">Nome / Equipa</label>
-              <input type="text" placeholder="Ex: E-Bus Luanda" value={newDisplayName} onChange={e => setNewDisplayName(e.target.value)} className="p-3 bg-black border border-zinc-700 rounded-xl text-white outline-none focus:border-emerald-500 text-sm" required />
+          <form onSubmit={handleCreateNewVehicle} className="w-full max-w-sm flex flex-col gap-5 glass-panel p-6 border border-white/10">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-vexto-green">Registar Novo</h2>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">Designação (Ex: Bus 6023)</label>
+              <input type="text" value={newDisplayName} onChange={e => setNewDisplayName(e.target.value)} className="p-3 bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-vexto-green text-sm transition-colors" required />
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-zinc-400">Matrícula</label>
-              <input type="text" placeholder="Ex: LD-02-45" value={newPlate} onChange={e => setNewPlate(e.target.value)} className="p-3 bg-black border border-zinc-700 rounded-xl text-white outline-none focus:border-emerald-500 text-sm" required />
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">Matrícula (Ex: LD-02-45)</label>
+              <input type="text" value={newPlate} onChange={e => setNewPlate(e.target.value)} className="p-3 bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-vexto-green text-sm transition-colors uppercase" required />
             </div>
-            <div className="flex gap-2 mt-2">
-              <button type="button" onClick={() => setIsRegisteringNew(false)} className="flex-1 py-3 bg-zinc-800 text-zinc-300 font-bold rounded-xl text-xs">VOLTAR</button>
-              <button type="submit" className="flex-1 py-3 bg-emerald-500 text-black font-bold rounded-xl text-xs">CRIAR</button>
+            <div className="flex gap-3 mt-4">
+              <button type="button" onClick={() => setIsRegisteringNew(false)} className="flex-1 py-3 bg-white/5 text-white font-medium rounded-lg text-xs hover:bg-white/10 transition-colors border border-white/10">VOLTAR</button>
+              <button type="submit" className="flex-1 py-3 bg-vexto-green text-black font-bold rounded-lg text-xs hover:bg-vexto-green/90 transition-colors">CRIAR</button>
             </div>
           </form>
         ) : (
           <div className="w-full max-w-sm flex flex-col gap-4">
-            <div className="max-h-60 overflow-y-auto flex flex-col gap-2 pr-1">
+            <div className="max-h-72 overflow-y-auto flex flex-col gap-3 pr-1 custom-scrollbar">
               {vehiclesList.map(v => (
-                <button key={v.id} onClick={() => setSelectedVehicle(v)} className="p-4 bg-zinc-900 border border-zinc-800 rounded-xl flex justify-between items-center hover:border-emerald-500 transition-all text-left">
+                <button key={v.id} onClick={() => setSelectedVehicle(v)} className="glass-panel p-4 border border-white/5 flex justify-between items-center hover:border-vexto-green hover:bg-vexto-green/5 transition-all text-left group">
                   <div>
-                    <div className="font-bold text-sm text-white">{v.display_name}</div>
-                    <div className="text-zinc-500 text-[10px] mt-0.5 uppercase tracking-widest">{v.plate}</div>
+                    <div className="font-medium text-sm text-white group-hover:text-vexto-green transition-colors">{v.display_name}</div>
+                    <div className="text-vexto-textMuted text-[10px] mt-1 uppercase tracking-widest">{v.plate}</div>
                   </div>
-                  <Truck className="w-4 h-4 text-emerald-400" />
+                  <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-vexto-green/20 transition-colors">
+                    <Truck className="w-4 h-4 text-vexto-textMuted group-hover:text-vexto-green" />
+                  </div>
                 </button>
               ))}
             </div>
 
-            <button onClick={() => setIsRegisteringNew(true)} className="w-full py-4 bg-zinc-900 border border-dashed border-zinc-700 rounded-xl flex items-center justify-center gap-2 text-emerald-400 text-xs font-bold hover:bg-zinc-800 transition-all">
-              <PlusCircle className="w-4 h-4" /> CADASTRAR NOVO VEÍCULO
+            <button onClick={() => setIsRegisteringNew(true)} className="w-full py-4 mt-2 bg-transparent border border-dashed border-white/20 rounded-xl flex items-center justify-center gap-2 text-vexto-textMuted text-xs font-medium hover:border-white/50 hover:text-white transition-all">
+              <PlusCircle className="w-4 h-4" /> ADICIONAR VEÍCULO
             </button>
           </div>
         )}
@@ -180,31 +186,56 @@ export default function DriverPage() {
   // Ecrã 2: Botão de Iniciar Turno
   if (!tracking) {
     return (
-      <main className="min-h-screen bg-black text-white flex flex-col items-center justify-between p-8 font-sans">
-        <div className="flex flex-col items-center gap-2 mt-8">
-          <h1 className="text-xl font-medium tracking-tight">Vexto Mobile</h1>
-          <p className="text-emerald-400 text-xs tracking-widest uppercase font-bold">{selectedVehicle.display_name} ({selectedVehicle.plate})</p>
+      <main className="min-h-screen bg-vexto-bg text-white flex flex-col items-center justify-between p-8">
+        <div className="flex flex-col items-center gap-2 mt-12 text-center">
+          <div className="px-3 py-1 border border-white/10 bg-white/5 rounded-full mb-4">
+             <span className="text-[10px] uppercase tracking-widest text-vexto-textMuted">Telemetria Vexto</span>
+          </div>
+          <h1 className="text-2xl font-medium tracking-tight">{selectedVehicle.display_name}</h1>
+          <p className="text-vexto-textMuted text-xs tracking-widest uppercase">{selectedVehicle.plate}</p>
         </div>
-        <button onClick={startTracking} className="w-48 h-48 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex flex-col items-center justify-center gap-3 shadow-[0_0_60px_rgba(34,197,94,0.2)]">
-          <Navigation className="w-8 h-8 text-emerald-400" />
-          <span className="text-lg font-medium tracking-tight text-emerald-400">INICIAR TURNO</span>
+
+        <button onClick={startTracking} className="relative w-56 h-56 rounded-full bg-vexto-green/10 border border-vexto-green/30 flex flex-col items-center justify-center gap-4 shadow-[0_0_60px_rgba(34,197,94,0.15)] hover:scale-105 hover:bg-vexto-green/20 transition-all duration-300 group">
+          <div className="absolute inset-0 rounded-full border border-vexto-green/50 animate-ping opacity-20"></div>
+          <Navigation className="w-10 h-10 text-vexto-green" />
+          <span className="text-lg font-medium tracking-tight text-vexto-green">INICIAR TURNO</span>
         </button>
-        <button onClick={() => setSelectedVehicle(null)} className="text-zinc-600 text-xs mb-4 underline">Mudar de Veículo</button>
+
+        <button onClick={() => setSelectedVehicle(null)} className="text-vexto-textMuted text-xs mb-8 hover:text-white transition-colors border-b border-transparent hover:border-white pb-1">
+          Trocar Veículo
+        </button>
       </main>
     );
   }
 
-  // Ecrã 3: Em Rastreio Ativo
+  // Ecrã 3: Em Rastreio Ativo (Telemetria Mobile)
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-black font-sans">
+    <main className="relative w-screen h-screen overflow-hidden bg-vexto-bg">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
-      <div className="absolute bottom-6 inset-x-4 z-10 flex items-center justify-between bg-zinc-900/90 backdrop-blur-md border border-white/10 p-4 rounded-2xl shadow-2xl">
-        <div className="flex items-center gap-2">
-          <Wifi className="w-4 h-4 text-emerald-400 animate-pulse" />
-          <span className="text-xs text-white font-medium">{sentCount} pacotes enviados</span>
+      
+      {/* HUD Superior Estilo Telemetria Vexto */}
+      <div className="absolute top-8 inset-x-6 z-10 glass-panel p-4 border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col gap-3 bg-vexto-bg/90 backdrop-blur-md">
+        <div className="flex justify-between items-start">
+           <div>
+             <h3 className="text-white text-base font-medium">{selectedVehicle.display_name}</h3>
+             <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">{selectedVehicle.plate}</span>
+           </div>
+           <div className="px-2 py-1 bg-vexto-green/10 border border-vexto-green/30 rounded text-vexto-green text-[10px] uppercase tracking-widest font-bold flex items-center gap-2">
+             <span className="w-1.5 h-1.5 rounded-full bg-vexto-green animate-pulse"></span>
+             ONLINE
+           </div>
         </div>
-        <button onClick={stopTracking} className="flex items-center gap-2 bg-red-500/20 border border-red-500/40 text-red-400 px-4 py-2.5 rounded-xl text-xs font-bold">
-          <PowerOff className="w-4 h-4" /> FECHAR / SAIR
+        <div className="flex justify-between items-center text-[10px] text-vexto-textMuted pt-2 border-t border-white/10">
+           <span className="flex items-center gap-1"><Signal className="w-3 h-3 text-white" /> GPS LTE Ativo</span>
+           <span>Pacotes: {sentCount}</span>
+        </div>
+      </div>
+
+      {/* Botão de Fechar Turno */}
+      <div className="absolute bottom-10 inset-x-6 z-10 flex items-center justify-center">
+        <button onClick={stopTracking} className="w-full glass-panel flex items-center justify-center gap-3 bg-vexto-red/10 hover:bg-vexto-red/20 border border-vexto-red/30 text-vexto-red px-4 py-4 transition-all duration-300">
+          <PowerOff className="w-5 h-5" />
+          <span className="text-sm font-bold tracking-wider">TERMINAR TURNO E FICAR OFFLINE</span>
         </button>
       </div>
     </main>
