@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { supabase } from '../../lib/supabaseClient'; 
-import { Navigation, PowerOff, Wifi, Truck, PlusCircle, Signal, Package, MapPin, CheckCircle2 } from 'lucide-react';
+import { Navigation, PowerOff, Wifi, Truck, PlusCircle, Signal, Package, MapPin, CheckCircle2, Crosshair } from 'lucide-react';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
@@ -21,7 +21,9 @@ export default function DriverPage() {
   const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
   const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
   const [destCoords, setDestCoords] = useState<[number, number] | null>(null);
-  const fetchedRouteId = useRef<string | null>(null);
+  
+  // Ref para impedir que o mapa encrave a focar a câmara a cada segundo
+  const hasFitBounds = useRef(false);
 
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
@@ -50,6 +52,7 @@ export default function DriverPage() {
     }
   }
 
+  // 1. INICIALIZAÇÃO DO MAPA
   useEffect(() => {
     if (!tracking || !mapContainer.current || !selectedVehicle) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -57,8 +60,8 @@ export default function DriverPage() {
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/dark-v11',
-      center: [-9.3235, 38.6826],
-      zoom: 16,
+      center: [-9.3235, 38.6826], // Fallback caso GPS falhe
+      zoom: 15,
       pitch: 60,
       bearing: -20,
       antialias: true
@@ -93,6 +96,7 @@ export default function DriverPage() {
     };
   }, [tracking]);
 
+  // 2. BUSCA ENTREGA ATIVA
   useEffect(() => {
     if (!tracking || !selectedVehicle) return;
     const fetchDelivery = async () => {
@@ -110,6 +114,7 @@ export default function DriverPage() {
     return () => { supabase.removeChannel(channel); };
   }, [tracking, selectedVehicle]);
 
+  // 3. RASTREIO GPS (AGORA FORÇADO A ALTA PRECISÃO)
   async function startTracking() {
     if (!navigator.geolocation || !selectedVehicle) return;
     await supabase.from('vehicles').update({ status: 'online' }).eq('id', selectedVehicle.id);
@@ -124,12 +129,10 @@ export default function DriverPage() {
             const el = document.createElement('div');
             el.className = 'w-6 h-6 bg-vexto-green rounded-full border-2 border-white shadow-[0_0_20px_rgba(34,197,94,1)] animate-pulse';
             markerRef.current = new mapboxgl.Marker(el).setLngLat([longitude, latitude]).addTo(map.current);
+            // Voa para a localização no primeiro momento que a encontra
+            map.current.flyTo({ center: [longitude, latitude], zoom: 16, pitch: 60 });
           } else {
             markerRef.current.setLngLat([longitude, latitude]);
-          }
-          
-          if (!activeDelivery) {
-            map.current.easeTo({ center: [longitude, latitude], duration: 1000 });
           }
         }
 
@@ -140,8 +143,8 @@ export default function DriverPage() {
         });
         setSentCount((n) => n + 1);
       },
-      (err) => console.error(err),
-      { enableHighAccuracy: true }
+      (err) => console.error("Erro GPS:", err),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 } // FORÇA PRECISÃO MÁXIMA
     );
     setTracking(true);
   }
@@ -153,20 +156,21 @@ export default function DriverPage() {
     setSelectedVehicle(null);
   }
 
+  // 4. LÓGICA DE GERAR ROTA (MUITO MAIS PRECISA E SÓ CORRE 1 VEZ)
   useEffect(() => {
-    if (!activeDelivery || !activeDelivery.dropoff_address || !currentLocation) {
-        if (!activeDelivery) {
-            setRouteGeoJSON(null);
-            setDestCoords(null);
-            fetchedRouteId.current = null;
-        }
+    if (!activeDelivery || !activeDelivery.dropoff_address) {
+        setRouteGeoJSON(null);
+        setDestCoords(null);
+        hasFitBounds.current = false;
         return;
     }
-    if (fetchedRouteId.current === activeDelivery.id) return;
+
+    if (!currentLocation || routeGeoJSON) return; // Se já desenhou, não repete!
 
     async function fetchRoute() {
         try {
-           const geoRes = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(activeDelivery.dropoff_address)}.json?access_token=${MAPBOX_TOKEN}`);
+           // Limitado a Portugal para evitar confusões de morada
+           const geoRes = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(activeDelivery.dropoff_address)}.json?access_token=${MAPBOX_TOKEN}&country=pt&limit=1`);
            const geoData = await geoRes.json();
            if (!geoData.features?.length) return;
            const dCoords = geoData.features[0].center; 
@@ -175,14 +179,14 @@ export default function DriverPage() {
            const routeData = await routeRes.json();
            if (!routeData.routes?.length) return;
 
-           setRouteGeoJSON(routeData.routes[0].geometry);
            setDestCoords(dCoords);
-           fetchedRouteId.current = activeDelivery.id;
+           setRouteGeoJSON(routeData.routes[0].geometry);
         } catch(e) { console.error("Erro na Rota:", e); }
     }
     fetchRoute();
-  }, [activeDelivery, currentLocation]);
+  }, [activeDelivery, currentLocation, routeGeoJSON]);
 
+  // 5. DESENHAR A ROTA NO MAPA
   useEffect(() => {
     if (!map.current) return;
     const m = map.current;
@@ -197,7 +201,7 @@ export default function DriverPage() {
                 type: 'line',
                 source: 'route',
                 layout: { 'line-join': 'round', 'line-cap': 'round' },
-                paint: { 'line-color': '#22c55e', 'line-width': 5, 'line-dasharray': [1, 2] }
+                paint: { 'line-color': '#22c55e', 'line-width': 6, 'line-dasharray': [1, 2] }
             });
         }
     } else {
@@ -213,19 +217,29 @@ export default function DriverPage() {
             destMarkerRef.current.setLngLat(destCoords);
         }
         
-        if (currentLocation) {
+        // FOCA A CÂMARA APENAS UMA VEZ
+        if (currentLocation && !hasFitBounds.current) {
            const bounds = new mapboxgl.LngLatBounds().extend([currentLocation.lng, currentLocation.lat]).extend(destCoords);
-           m.fitBounds(bounds, { padding: {top: 150, bottom: 300, left: 50, right: 50}, pitch: 60, maxZoom: 16 });
+           m.fitBounds(bounds, { padding: {top: 150, bottom: 400, left: 50, right: 50}, pitch: 45, maxZoom: 15 });
+           hasFitBounds.current = true;
         }
     } else {
         if (destMarkerRef.current) { destMarkerRef.current.remove(); destMarkerRef.current = null; }
+        hasFitBounds.current = false;
     }
-  }, [routeGeoJSON, destCoords, currentLocation]);
+  }, [routeGeoJSON, destCoords]);
 
   async function completeDelivery() {
     if (!activeDelivery) return;
     await supabase.from('deliveries').update({ status: 'completed' }).eq('id', activeDelivery.id);
     setActiveDelivery(null);
+  }
+
+  // NOVO: Função para o utilizador forçar a câmara para si mesmo
+  function recenterMap() {
+    if (map.current && currentLocation) {
+      map.current.flyTo({ center: [currentLocation.lng, currentLocation.lat], zoom: 16, pitch: 60 });
+    }
   }
 
   if (!selectedVehicle) {
@@ -243,11 +257,11 @@ export default function DriverPage() {
           <form onSubmit={handleCreateNewVehicle} className="w-full max-w-sm flex flex-col gap-5 glass-panel p-6 border border-white/10">
             <h2 className="text-sm font-bold uppercase tracking-wider text-vexto-green">Registar Novo</h2>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">Designação (Ex: Bus 6023)</label>
+              <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">Designação</label>
               <input type="text" value={newDisplayName} onChange={e => setNewDisplayName(e.target.value)} className="p-3 bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-vexto-green text-sm transition-colors" required />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">Matrícula (Ex: LD-02-45)</label>
+              <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">Matrícula</label>
               <input type="text" value={newPlate} onChange={e => setNewPlate(e.target.value)} className="p-3 bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-vexto-green text-sm transition-colors uppercase" required />
             </div>
             <div className="flex gap-3 mt-4">
@@ -326,6 +340,14 @@ export default function DriverPage() {
       </div>
 
       <div className="absolute bottom-6 inset-x-4 z-10 flex flex-col gap-3">
+        
+        {/* BOTÃO DE CENTRAR GPS */}
+        <div className="flex justify-end mb-2">
+           <button onClick={recenterMap} className="p-3 bg-black/80 backdrop-blur-xl border border-white/20 rounded-full shadow-xl hover:bg-white/10 transition-colors">
+              <Crosshair className="w-5 h-5 text-vexto-green" />
+           </button>
+        </div>
+
         {activeDelivery ? (
           <div className="glass-panel p-5 border border-amber-500/30 bg-black/80 backdrop-blur-xl shadow-[0_10px_40px_rgba(245,158,11,0.15)] rounded-2xl flex flex-col gap-4 animate-in slide-in-from-bottom-4">
             <div className="flex items-center justify-between">
