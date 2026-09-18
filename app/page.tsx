@@ -118,7 +118,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* NOVO: BLOCO DE MÉTRICAS GLOBAIS NO CANTO SUPERIOR DIREITO */}
+      {/* BLOCO DE MÉTRICAS GLOBAIS NO CANTO SUPERIOR DIREITO */}
       <div className="absolute top-8 right-8 z-20 flex gap-4 pointer-events-none">
         <div className="glass-panel px-5 py-3 rounded-xl flex items-center gap-4 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] pointer-events-auto">
            <div className="flex flex-col">
@@ -138,7 +138,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* BARRA LATERAL (LISTA DE VEÍCULOS) - INTOCÁVEL */}
+      {/* BARRA LATERAL (LISTA DE VEÍCULOS) */}
       <div className="glass-panel w-105 h-full rounded-none relative z-10 flex flex-col bg-vexto-bg/80 backdrop-blur-xl border-y-0 border-l-0 border-r border-white/5 overflow-hidden">
         <header className="p-8 pb-6 shrink-0">
           <div className="flex items-center gap-3 mb-8">
@@ -211,7 +211,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* PAINEL DE ANÁLISE INFERIOR - INTOCÁVEL */}
+      {/* PAINEL DE ANÁLISE INFERIOR */}
       <div className="absolute bottom-8 right-8 z-20 flex items-end gap-6 pointer-events-none">
         <div className="glass-panel w-120 p-6 pointer-events-auto border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col justify-between">
            <div className="flex justify-between items-start mb-5">
@@ -250,6 +250,36 @@ export default function Dashboard() {
                  </ResponsiveContainer>
               </div>
            </div>
+        </div>
+      </div>
+
+      {/* POD DE ALERTAS PREDITIVOS (LOGÍSTICA / DELIVERY) */}
+      <div className="absolute bottom-8 left-110 z-20 flex flex-col gap-3 pointer-events-none">
+        <div className="glass-panel w-80 p-5 pointer-events-auto border-vexto-red/30 shadow-[0_10px_40px_rgba(239,68,68,0.15)] backdrop-blur-xl bg-black/40">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-white text-sm font-medium tracking-wide">Alerta Operacional</span>
+          </div>
+          <div className="flex items-center gap-2 mb-4">
+            <div className="px-2 py-1 bg-white/10 rounded text-white text-[10px] tracking-widest uppercase border border-white/10">
+              Risco de Atraso (SLA)
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <div className="w-2 h-2 rounded-full bg-vexto-red shadow-[0_0_8px_rgba(239,68,68,0.8)] mt-1.5 animate-pulse"></div>
+            <div className="flex flex-col gap-1">
+              <span className="text-white text-sm">3 Entregas fora da janela de tempo</span>
+              <span className="text-vexto-textMuted text-[10px]">Detetado há 2m (Trânsito severo na Rota Sul)</span>
+            </div>
+          </div>
+
+          <div className="mt-5 pt-4 border-t border-white/10 flex flex-col gap-2">
+             <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Ação Preditiva (IA):</span>
+             <div className="flex justify-between items-center group cursor-pointer bg-vexto-green/10 border border-vexto-green/20 px-3 py-2 rounded hover:bg-vexto-green/20 transition-colors">
+                <span className="text-vexto-green text-xs font-medium">Reatribuir entregas ao E-Bus 07</span>
+                <ArrowUpRight className="text-vexto-green w-3 h-3 group-hover:text-white transition-colors" />
+             </div>
+          </div>
         </div>
       </div>
     </main>
