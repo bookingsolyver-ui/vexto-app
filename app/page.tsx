@@ -238,7 +238,7 @@ export default function Dashboard() {
   }, [selectedVehicleId]);
 
   // NOVO: FUNÇÃO PARA DESPACHAR ENTREGA REAL
-  async function handleDispatchDelivery(e: React.FormEvent) {
+async function handleDispatchDelivery(e: React.FormEvent) {
     e.preventDefault();
     if (!deliveryForm.driverId || !deliveryForm.customer || !deliveryForm.destination) return;
 
@@ -246,13 +246,12 @@ export default function Dashboard() {
       id: crypto.randomUUID(),
       driver_id: deliveryForm.driverId,
       customer: deliveryForm.customer,
-      destination: deliveryForm.destination,
-      status: 'in_progress' // Ao inserir como in_progress, a app do motorista reage logo!
+      dropoff_address: deliveryForm.destination, // LIGADO À TUA COLUNA DO SUPABASE!
+      status: 'in_progress'
     });
 
     setIsModalOpen(false);
     setDeliveryForm({ customer: '', destination: '', driverId: vehicles[0]?.id || '' });
-    // Força a navegação para o mapa para o gestor ver o veículo selecionado
     setSelectedVehicleId(deliveryForm.driverId);
     setActiveTab('live_map'); 
   }

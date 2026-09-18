@@ -12,19 +12,21 @@ export default function DriverPage() {
   const [vehiclesList, setVehiclesList] = useState<any[]>([]);
   const [selectedVehicle, setSelectedVehicle] = useState<any>(null);
   const [isRegisteringNew, setIsRegisteringNew] = useState(false);
-  
   const [newDisplayName, setNewDisplayName] = useState('');
   const [newPlate, setNewPlate] = useState('');
-
   const [tracking, setTracking] = useState(false);
   const [sentCount, setSentCount] = useState(0);
-
-  // NOVO: Estado da entrega
   const [activeDelivery, setActiveDelivery] = useState<any>(null);
+  
+  const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [routeGeoJSON, setRouteGeoJSON] = useState<any>(null);
+  const [destCoords, setDestCoords] = useState<[number, number] | null>(null);
+  const fetchedRouteId = useRef<string | null>(null);
 
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markerRef = useRef<mapboxgl.Marker | null>(null);
+  const destMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -38,22 +40,16 @@ export default function DriverPage() {
   async function handleCreateNewVehicle(e: React.FormEvent) {
     e.preventDefault();
     if (!newDisplayName || !newPlate) return;
-
     const newId = crypto.randomUUID();
-    const { error } = await supabase.from('vehicles').insert([
-      { id: newId, display_name: newDisplayName, plate: newPlate, status: 'offline' }
-    ]);
-
+    const { error } = await supabase.from('vehicles').insert([{ id: newId, display_name: newDisplayName, plate: newPlate, status: 'offline' }]);
     if (error) {
       alert("Erro ao criar veículo: " + error.message);
     } else {
-      const created = { id: newId, display_name: newDisplayName, plate: newPlate };
-      setSelectedVehicle(created);
+      setSelectedVehicle({ id: newId, display_name: newDisplayName, plate: newPlate });
       setIsRegisteringNew(false);
     }
   }
 
-  // Mapa e Rastreio GPS
   useEffect(() => {
     if (!tracking || !mapContainer.current || !selectedVehicle) return;
     mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -62,64 +58,66 @@ export default function DriverPage() {
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [-9.3235, 38.6826],
-      zoom: 15,
-      pitch: 45,
+      zoom: 16,
+      pitch: 60,
+      bearing: -20,
+      antialias: true
     });
 
-    map.current.on('load', () => {
+    map.current.on('style.load', () => {
       if (!map.current) return;
-      navigator.geolocation.getCurrentPosition((pos) => {
-        if (map.current) {
-          map.current.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 16, essential: true });
-        }
-      });
+      const layers = map.current.getStyle().layers;
+      const labelLayerId = layers?.find((layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field'])?.id;
+      
+      map.current.addLayer({
+          'id': '3d-buildings',
+          'source': 'composite',
+          'source-layer': 'building',
+          'filter': ['==', 'extrude', 'true'],
+          'type': 'fill-extrusion',
+          'minzoom': 15,
+          'paint': {
+            'fill-extrusion-color': '#1f1f1f',
+            'fill-extrusion-height': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'height']],
+            'fill-extrusion-base': ['interpolate', ['linear'], ['zoom'], 15, 0, 15.05, ['get', 'min_height']],
+            'fill-extrusion-opacity': 0.7
+          }
+        }, labelLayerId);
     });
 
     return () => {
       if (markerRef.current) markerRef.current.remove();
+      if (destMarkerRef.current) destMarkerRef.current.remove();
       map.current?.remove();
       map.current = null;
     };
   }, [tracking]);
 
-  // NOVO: Escutar Entregas do Supabase
   useEffect(() => {
     if (!tracking || !selectedVehicle) return;
-
     const fetchDelivery = async () => {
-      const { data } = await supabase
-        .from('deliveries')
-        .select('*')
-        .eq('driver_id', selectedVehicle.id)
-        .eq('status', 'in_progress')
-        .maybeSingle();
+      const { data } = await supabase.from('deliveries').select('*').eq('driver_id', selectedVehicle.id).eq('status', 'in_progress').maybeSingle();
       setActiveDelivery(data || null);
     };
-
     fetchDelivery();
-
     const channel = supabase.channel(`driver-del-${selectedVehicle.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries', filter: `driver_id=eq.${selectedVehicle.id}` },
         (payload: any) => {
-          if (payload.new && payload.new.status === 'in_progress') {
-            setActiveDelivery(payload.new);
-          } else {
-            setActiveDelivery(null);
-          }
+          if (payload.new && payload.new.status === 'in_progress') setActiveDelivery(payload.new);
+          else setActiveDelivery(null);
         }
       ).subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [tracking, selectedVehicle]);
 
   async function startTracking() {
     if (!navigator.geolocation || !selectedVehicle) return;
-
     await supabase.from('vehicles').update({ status: 'online' }).eq('id', selectedVehicle.id);
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       async (pos) => {
         const { latitude, longitude, heading, speed } = pos.coords;
+        setCurrentLocation({ lat: latitude, lng: longitude });
 
         if (map.current) {
           if (!markerRef.current) {
@@ -129,18 +127,17 @@ export default function DriverPage() {
           } else {
             markerRef.current.setLngLat([longitude, latitude]);
           }
-          map.current.easeTo({ center: [longitude, latitude], duration: 1000 });
+          
+          if (!activeDelivery) {
+            map.current.easeTo({ center: [longitude, latitude], duration: 1000 });
+          }
         }
 
         await supabase.from('vehicle_positions').insert({
-          vehicle_id: selectedVehicle.id, 
-          lat: latitude, 
-          lng: longitude,
-          heading: heading ?? null, 
-          speed_kmh: speed ? speed * 3.6 : null,
+          vehicle_id: selectedVehicle.id, lat: latitude, lng: longitude,
+          heading: heading ?? null, speed_kmh: speed ? speed * 3.6 : null,
           updated_at: new Date().toISOString(),
         });
-
         setSentCount((n) => n + 1);
       },
       (err) => console.error(err),
@@ -150,27 +147,80 @@ export default function DriverPage() {
   }
 
   async function stopTracking() {
-    if (selectedVehicle) {
-      await supabase.from('vehicles').update({ status: 'offline' }).eq('id', selectedVehicle.id);
-    }
+    if (selectedVehicle) await supabase.from('vehicles').update({ status: 'offline' }).eq('id', selectedVehicle.id);
     if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
     setTracking(false);
     setSelectedVehicle(null);
   }
 
-  // NOVO: Funções de Ciclo de Vida da Entrega
-  async function simulateNewDelivery() {
-    const newDelivery = {
-      id: crypto.randomUUID(),
-      driver_id: selectedVehicle.id,
-      status: 'in_progress',
-      // Caso a tua tabela deliveries não tenha estas colunas de morada, o Supabase ignora ou podes adicionar depois.
-      // O essencial para o Dashboard reagir é o status='in_progress' e o driver_id.
-    };
-    
-    await supabase.from('deliveries').insert(newDelivery);
-    setActiveDelivery({ ...newDelivery, destination: 'Avenida da Liberdade, 110', customer: 'TechCorp Lda' });
-  }
+  useEffect(() => {
+    if (!activeDelivery || !activeDelivery.dropoff_address || !currentLocation) {
+        if (!activeDelivery) {
+            setRouteGeoJSON(null);
+            setDestCoords(null);
+            fetchedRouteId.current = null;
+        }
+        return;
+    }
+    if (fetchedRouteId.current === activeDelivery.id) return;
+
+    async function fetchRoute() {
+        try {
+           const geoRes = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(activeDelivery.dropoff_address)}.json?access_token=${MAPBOX_TOKEN}`);
+           const geoData = await geoRes.json();
+           if (!geoData.features?.length) return;
+           const dCoords = geoData.features[0].center; 
+
+           const routeRes = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving/${currentLocation!.lng},${currentLocation!.lat};${dCoords[0]},${dCoords[1]}?geometries=geojson&access_token=${MAPBOX_TOKEN}`);
+           const routeData = await routeRes.json();
+           if (!routeData.routes?.length) return;
+
+           setRouteGeoJSON(routeData.routes[0].geometry);
+           setDestCoords(dCoords);
+           fetchedRouteId.current = activeDelivery.id;
+        } catch(e) { console.error("Erro na Rota:", e); }
+    }
+    fetchRoute();
+  }, [activeDelivery, currentLocation]);
+
+  useEffect(() => {
+    if (!map.current) return;
+    const m = map.current;
+
+    if (routeGeoJSON) {
+        if (m.getSource('route')) {
+            (m.getSource('route') as mapboxgl.GeoJSONSource).setData(routeGeoJSON);
+        } else {
+            m.addSource('route', { type: 'geojson', data: routeGeoJSON });
+            m.addLayer({
+                id: 'route-layer',
+                type: 'line',
+                source: 'route',
+                layout: { 'line-join': 'round', 'line-cap': 'round' },
+                paint: { 'line-color': '#22c55e', 'line-width': 5, 'line-dasharray': [1, 2] }
+            });
+        }
+    } else {
+        if (m.getSource('route')) (m.getSource('route') as mapboxgl.GeoJSONSource).setData({type: 'FeatureCollection', features: []});
+    }
+
+    if (destCoords) {
+        if (!destMarkerRef.current) {
+            const el = document.createElement('div');
+            el.innerHTML = `<div class="w-8 h-8 bg-vexto-bg border-2 border-vexto-green rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(34,197,94,0.5)]"><div class="w-3 h-3 bg-vexto-green rounded-full"></div></div>`;
+            destMarkerRef.current = new mapboxgl.Marker(el).setLngLat(destCoords).addTo(m);
+        } else {
+            destMarkerRef.current.setLngLat(destCoords);
+        }
+        
+        if (currentLocation) {
+           const bounds = new mapboxgl.LngLatBounds().extend([currentLocation.lng, currentLocation.lat]).extend(destCoords);
+           m.fitBounds(bounds, { padding: {top: 150, bottom: 300, left: 50, right: 50}, pitch: 60, maxZoom: 16 });
+        }
+    } else {
+        if (destMarkerRef.current) { destMarkerRef.current.remove(); destMarkerRef.current = null; }
+    }
+  }, [routeGeoJSON, destCoords, currentLocation]);
 
   async function completeDelivery() {
     if (!activeDelivery) return;
@@ -258,7 +308,6 @@ export default function DriverPage() {
     <main className="relative w-screen h-screen overflow-hidden bg-vexto-bg">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
       
-      {/* HUD Superior */}
       <div className="absolute top-8 inset-x-6 z-10 glass-panel p-4 border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col gap-3 bg-vexto-bg/90 backdrop-blur-md">
         <div className="flex justify-between items-start">
            <div>
@@ -276,21 +325,21 @@ export default function DriverPage() {
         </div>
       </div>
 
-      {/* NOVO: CARD DE GESTÃO DE ENTREGAS */}
       <div className="absolute bottom-6 inset-x-4 z-10 flex flex-col gap-3">
-        
-        {/* Se tem entrega ativa, mostra o cartão da entrega */}
         {activeDelivery ? (
-          <div className="glass-panel p-5 border border-amber-500/30 bg-black/80 backdrop-blur-xl shadow-[0_10px_40px_rgba(245,158,11,0.15)] rounded-2xl flex flex-col gap-4">
-            <div className="flex items-center gap-2">
-              <Package className="w-5 h-5 text-amber-500" />
-              <span className="text-white text-sm font-bold tracking-wide uppercase">Entrega em Curso</span>
+          <div className="glass-panel p-5 border border-amber-500/30 bg-black/80 backdrop-blur-xl shadow-[0_10px_40px_rgba(245,158,11,0.15)] rounded-2xl flex flex-col gap-4 animate-in slide-in-from-bottom-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Package className="w-5 h-5 text-amber-500" />
+                <span className="text-white text-sm font-bold tracking-wide uppercase">Entrega em Curso</span>
+              </div>
+              {routeGeoJSON && <span className="text-vexto-green text-[10px] uppercase tracking-widest font-bold border border-vexto-green/30 px-2 py-1 rounded bg-vexto-green/10">Rota Calculada</span>}
             </div>
             
             <div className="flex flex-col gap-1 pl-7">
-              <span className="text-white text-base">{activeDelivery.destination || 'Avenida da Liberdade, 110'}</span>
-              <span className="text-vexto-textMuted text-xs flex items-center gap-1">
-                 Cliente: {activeDelivery.customer || 'TechCorp Lda'}
+              <span className="text-white text-base leading-tight">{activeDelivery.dropoff_address || 'Sem Morada Registada'}</span>
+              <span className="text-vexto-textMuted text-xs flex items-center gap-1 mt-1">
+                 Cliente: <strong className="text-white font-medium">{activeDelivery.customer || 'Sem Nome'}</strong>
               </span>
             </div>
 
@@ -299,13 +348,11 @@ export default function DriverPage() {
             </button>
           </div>
         ) : (
-          /* Se NÃO tem entrega, botão para pedir novo serviço */
-          <button onClick={simulateNewDelivery} className="glass-panel p-4 border border-white/20 bg-black/60 backdrop-blur-xl rounded-2xl flex items-center justify-center gap-2 text-white hover:border-white/40 transition-all font-medium text-sm">
-            <MapPin className="w-4 h-4 text-vexto-textMuted" /> Receber Nova Entrega
-          </button>
+          <div className="glass-panel p-4 border border-white/10 bg-black/60 backdrop-blur-xl rounded-2xl flex items-center justify-center gap-2 text-vexto-textMuted font-medium text-sm">
+            <Wifi className="w-4 h-4" /> A Aguardar Despacho...
+          </div>
         )}
 
-        {/* Botão de Fechar Turno original */}
         <button onClick={stopTracking} className="w-full glass-panel flex items-center justify-center gap-3 bg-vexto-red/10 hover:bg-vexto-red/20 border border-vexto-red/30 text-vexto-red px-4 py-4 rounded-2xl transition-all duration-300">
           <PowerOff className="w-5 h-5" />
           <span className="text-sm font-bold tracking-wider">TERMINAR TURNO</span>
