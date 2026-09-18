@@ -238,7 +238,8 @@ export default function Dashboard() {
   }, [selectedVehicleId]);
 
   // NOVO: FUNÇÃO PARA DESPACHAR ENTREGA REAL
-async function handleDispatchDelivery(e: React.FormEvent) {
+// NOVO: FUNÇÃO PARA DESPACHAR ENTREGA REAL (CORRIGIDA PARA AS COLUNAS CORRETAS)
+  async function handleDispatchDelivery(e: React.FormEvent) {
     e.preventDefault();
     if (!deliveryForm.driverId || !deliveryForm.customer || !deliveryForm.destination) return;
 
@@ -246,7 +247,7 @@ async function handleDispatchDelivery(e: React.FormEvent) {
       id: crypto.randomUUID(),
       driver_id: deliveryForm.driverId,
       customer: deliveryForm.customer,
-      dropoff_address: deliveryForm.destination, // LIGADO À TUA COLUNA DO SUPABASE!
+      dropoff_address: deliveryForm.destination, // CORREÇÃO AQUI: Garante que usa a tua coluna 'dropoff_address'
       status: 'in_progress'
     });
 
