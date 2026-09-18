@@ -2,7 +2,7 @@
 
 import LiveMap from '../components/LiveMap';
 import React, { useEffect, useState } from 'react';
-import { Wifi, ArrowUpRight, TrendingUp, Zap, Activity, BarChart3, Clock, AlertTriangle, CheckCircle2, Truck, MapPin, Search, Globe } from 'lucide-react';
+import { Wifi, ArrowUpRight, TrendingUp, Zap, Activity, Clock, AlertTriangle, CheckCircle2, Truck, MapPin, Search, Globe, PlusCircle, X } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { supabase, LiveVehiclePosition } from '../lib/supabaseClient';
 
@@ -15,7 +15,7 @@ const fallbackPassengerData = [
   { time: '21:00', value: 48 },
 ];
 
-// DICIONÁRIO DE LOCALIZAÇÃO (GLOBAL SCALING)
+// DICIONÁRIO DE LOCALIZAÇÃO (ATUALIZADO COM MODAL DE ENTREGAS)
 const translations = {
   PT: {
     liveMap: "Live Map",
@@ -61,7 +61,14 @@ const translations = {
     analyzeReassign: "Analisar opções de reatribuição",
     logCenter: "Centro Logístico",
     warehouse: "Armazém Norte",
-    zone: "Zona Sul"
+    zone: "Zona Sul",
+    newDelivery: "Nova Entrega",
+    dispatchAction: "Despachar Serviço",
+    customerName: "Nome do Cliente",
+    destAddress: "Morada de Destino",
+    selectDriver: "Atribuir a Veículo",
+    cancel: "Cancelar",
+    confirmDispatch: "Confirmar Despacho"
   },
   EN: {
     liveMap: "Live Map",
@@ -107,7 +114,14 @@ const translations = {
     analyzeReassign: "Analyze reassignment options",
     logCenter: "Logistics Center",
     warehouse: "North Warehouse",
-    zone: "South Zone"
+    zone: "South Zone",
+    newDelivery: "New Delivery",
+    dispatchAction: "Dispatch Service",
+    customerName: "Customer Name",
+    destAddress: "Destination Address",
+    selectDriver: "Assign to Vehicle",
+    cancel: "Cancel",
+    confirmDispatch: "Confirm Dispatch"
   }
 };
 
@@ -122,10 +136,12 @@ export default function Dashboard() {
   const [totalDeliveriesToday, setTotalDeliveriesToday] = useState<number>(0);
 
   const [activeTab, setActiveTab] = useState<'live_map' | 'fleet' | 'routes' | 'analytics'>('live_map');
-  
-  // NOVO: Estado de Localização
   const [lang, setLang] = useState<'PT' | 'EN'>('PT');
   const t = translations[lang];
+
+  // NOVO: ESTADOS PARA O MODAL DE DESPACHO
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deliveryForm, setDeliveryForm] = useState({ customer: '', destination: '', driverId: '' });
 
   useEffect(() => {
     async function fetchVehicles() {
@@ -133,6 +149,7 @@ export default function Dashboard() {
       if (data && data.length > 0) {
         setVehicles(data);
         if (!selectedVehicleId) setSelectedVehicleId(data[0].id);
+        if (!deliveryForm.driverId) setDeliveryForm(prev => ({ ...prev, driverId: data[0].id }));
       }
     }
     fetchVehicles();
@@ -220,6 +237,26 @@ export default function Dashboard() {
     return () => { clearInterval(interval); supabase.removeChannel(analyticsChannel); };
   }, [selectedVehicleId]);
 
+  // NOVO: FUNÇÃO PARA DESPACHAR ENTREGA REAL
+  async function handleDispatchDelivery(e: React.FormEvent) {
+    e.preventDefault();
+    if (!deliveryForm.driverId || !deliveryForm.customer || !deliveryForm.destination) return;
+
+    await supabase.from('deliveries').insert({
+      id: crypto.randomUUID(),
+      driver_id: deliveryForm.driverId,
+      customer: deliveryForm.customer,
+      destination: deliveryForm.destination,
+      status: 'in_progress' // Ao inserir como in_progress, a app do motorista reage logo!
+    });
+
+    setIsModalOpen(false);
+    setDeliveryForm({ customer: '', destination: '', driverId: vehicles[0]?.id || '' });
+    // Força a navegação para o mapa para o gestor ver o veículo selecionado
+    setSelectedVehicleId(deliveryForm.driverId);
+    setActiveTab('live_map'); 
+  }
+
   const onlineCount = vehicles.filter(v => v.status === 'online').length;
   const offlineCount = vehicles.filter(v => v.status !== 'online').length;
   const isLiveGpsActive = livePosition && Date.now() - new Date(livePosition.updated_at).getTime() < 15000;
@@ -281,67 +318,60 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* ABA: ROUTES */}
+        {/* ABA: ROUTES (COM BOTÃO DE NOVA ENTREGA) */}
         {activeTab === 'routes' && (
           <div className="w-full h-full p-32 pl-120 pt-40 overflow-y-auto custom-scrollbar animate-in fade-in duration-300">
             <div className="max-w-6xl">
-              <div className="mb-12">
-                <h2 className="text-3xl font-medium tracking-tight mb-2">{t.routesMon}</h2>
-                <p className="text-vexto-textMuted text-sm">{t.routesDesc}</p>
+              <div className="flex justify-between items-end mb-12">
+                <div>
+                  <h2 className="text-3xl font-medium tracking-tight mb-2">{t.routesMon}</h2>
+                  <p className="text-vexto-textMuted text-sm">{t.routesDesc}</p>
+                </div>
+                {/* BOTÃO PARA ABRIR O MODAL DE DESPACHO */}
+                <button onClick={() => setIsModalOpen(true)} className="bg-vexto-green text-black px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-vexto-green/90 hover:scale-105 transition-all shadow-[0_0_20px_rgba(34,197,94,0.2)]">
+                  <PlusCircle className="w-4 h-4" /> {t.newDelivery}
+                </button>
               </div>
 
               <div className="flex flex-col gap-4">
-                <div className="glass-panel p-6 border border-white/10 rounded-2xl flex items-center justify-between hover:border-vexto-green/50 transition-all cursor-pointer">
-                  <div className="flex items-center gap-6 w-1/3">
-                    <div className="w-12 h-12 rounded-full bg-vexto-green/10 border border-vexto-green/30 flex items-center justify-center">
-                      <Truck className="w-5 h-5 text-vexto-green" />
+                {activeDelivery ? (
+                  <div className="glass-panel p-6 border border-white/10 rounded-2xl flex items-center justify-between hover:border-vexto-green/50 transition-all cursor-pointer">
+                    <div className="flex items-center gap-6 w-1/3">
+                      <div className="w-12 h-12 rounded-full bg-vexto-green/10 border border-vexto-green/30 flex items-center justify-center">
+                        <Truck className="w-5 h-5 text-vexto-green" />
+                      </div>
+                      <div>
+                        <h4 className="text-white font-medium">{selectedVeh?.display_name || 'Veículo'}</h4>
+                        <p className="text-vexto-green text-[10px] uppercase tracking-widest font-bold mt-1">{t.activeRoute}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h4 className="text-white font-medium">{selectedVeh?.display_name || 'Bus 6023'}</h4>
-                      <p className="text-vexto-green text-[10px] uppercase tracking-widest font-bold mt-1">{t.activeRoute}</p>
+                    
+                    <div className="flex-1 flex items-center justify-center gap-4">
+                      <div className="flex flex-col items-end w-32 text-right">
+                        <span className="text-white text-sm font-medium">{activeDelivery.customer || t.logCenter}</span>
+                        <span className="text-vexto-textMuted text-[10px]">{t.departure}: Agora</span>
+                      </div>
+                      <div className="w-32 h-px bg-white/20 relative">
+                        <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-vexto-green animate-ping"></div>
+                      </div>
+                      <div className="flex flex-col items-start w-32 text-left">
+                        <span className="text-white text-sm font-medium truncate w-full">{activeDelivery.destination || 'Destino'}</span>
+                        <span className="text-vexto-textMuted text-[10px]">{t.eta}: ---</span>
+                      </div>
                     </div>
-                  </div>
-                  
-                  <div className="flex-1 flex items-center justify-center gap-4">
-                    <div className="flex flex-col items-end">
-                      <span className="text-white text-sm font-medium">{t.logCenter}</span>
-                      <span className="text-vexto-textMuted text-[10px]">{t.departure}: 08:00 AM</span>
-                    </div>
-                    <div className="w-32 h-px bg-white/20 relative">
-                      <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-vexto-green animate-ping"></div>
-                    </div>
-                    <div className="flex flex-col items-start">
-                      <span className="text-white text-sm font-medium">TechCorp Lda</span>
-                      <span className="text-vexto-textMuted text-[10px]">{t.eta}: 11:30 AM</span>
-                    </div>
-                  </div>
 
-                  <div className="w-1/4 flex justify-end">
-                    <span className="px-3 py-1 bg-white/5 border border-white/10 rounded-lg text-xs text-white flex items-center gap-2">
-                      <MapPin className="w-3 h-3 text-vexto-textMuted" /> {t.inTransit}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="glass-panel p-6 border border-white/5 rounded-2xl flex items-center justify-between opacity-60 hover:opacity-100 transition-all">
-                  <div className="flex items-center gap-6 w-1/3">
-                    <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
-                      <CheckCircle2 className="w-5 h-5 text-vexto-textMuted" />
-                    </div>
-                    <div>
-                      <h4 className="text-white font-medium">E-Bus 07</h4>
-                      <p className="text-vexto-textMuted text-[10px] uppercase tracking-widest mt-1">{t.completed}</p>
+                    <div className="w-1/4 flex justify-end">
+                      <span className="px-3 py-1 bg-white/5 border border-white/10 rounded-lg text-xs text-white flex items-center gap-2">
+                        <MapPin className="w-3 h-3 text-vexto-textMuted" /> {t.inTransit}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex-1 flex items-center justify-center gap-4">
-                    <span className="text-vexto-textMuted text-sm">{t.warehouse}</span>
-                    <div className="w-32 h-px bg-white/10"></div>
-                    <span className="text-vexto-textMuted text-sm">{t.zone}</span>
+                ) : (
+                  <div className="glass-panel p-10 border border-white/5 rounded-2xl flex flex-col items-center justify-center gap-3 text-vexto-textMuted opacity-60">
+                     <MapPin className="w-8 h-8 opacity-50" />
+                     <p className="text-sm">Nenhuma rota ativa no momento.</p>
                   </div>
-                  <div className="w-1/4 flex justify-end">
-                    <span className="text-vexto-textMuted text-xs">{t.deliveredAt} 09:15 AM</span>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -433,8 +463,6 @@ export default function Dashboard() {
 
       {/* BLOCO DE MÉTRICAS GLOBAIS E SELETOR DE IDIOMA */}
       <div className="absolute top-8 right-8 z-20 flex gap-4 pointer-events-none animate-in fade-in">
-        
-        {/* SELETOR DE IDIOMA (PT / EN) */}
         <div className="glass-panel p-1 rounded-xl flex items-center gap-1 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] pointer-events-auto bg-black/40 backdrop-blur-md h-12">
            <div className="pl-3 pr-2 text-vexto-textMuted"><Globe className="w-4 h-4" /></div>
            <button onClick={() => setLang('PT')} className={`px-2.5 py-1.5 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-all ${lang === 'PT' ? 'bg-vexto-green text-black' : 'text-vexto-textMuted hover:text-white'}`}>PT</button>
@@ -606,6 +634,50 @@ export default function Dashboard() {
                   <ArrowUpRight className="text-vexto-green w-3 h-3 group-hover:text-white transition-colors" />
                </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE DESPACHO DE ENTREGA (OVERLAY) */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="glass-panel w-full max-w-md p-6 border border-white/10 rounded-2xl shadow-2xl bg-vexto-bg/95 relative animate-in zoom-in-95 duration-200">
+            <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-vexto-textMuted hover:text-white transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+            
+            <h3 className="text-xl text-white font-medium mb-1">{t.newDelivery}</h3>
+            <p className="text-vexto-textMuted text-xs mb-6">Insira os dados do cliente e atribua a entrega a um veículo em campo.</p>
+            
+            <form onSubmit={handleDispatchDelivery} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">{t.customerName}</label>
+                <input required type="text" value={deliveryForm.customer} onChange={e => setDeliveryForm({...deliveryForm, customer: e.target.value})} placeholder="Ex: TechCorp Lda" className="p-3 bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-vexto-green text-sm transition-colors" />
+              </div>
+              
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">{t.destAddress}</label>
+                <input required type="text" value={deliveryForm.destination} onChange={e => setDeliveryForm({...deliveryForm, destination: e.target.value})} placeholder="Ex: Avenida da Liberdade, 110" className="p-3 bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-vexto-green text-sm transition-colors" />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] uppercase tracking-widest text-vexto-textMuted">{t.selectDriver}</label>
+                <select required value={deliveryForm.driverId} onChange={e => setDeliveryForm({...deliveryForm, driverId: e.target.value})} className="p-3 bg-black/40 border border-white/10 rounded-lg text-white outline-none focus:border-vexto-green text-sm transition-colors appearance-none cursor-pointer">
+                  {vehicles.map(v => (
+                    <option key={v.id} value={v.id}>{v.display_name} ({v.status === 'online' ? 'Online' : 'Offline'})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex gap-3 mt-4 pt-4 border-t border-white/5">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 bg-white/5 text-white font-medium rounded-lg text-xs hover:bg-white/10 transition-colors border border-white/10">
+                  {t.cancel}
+                </button>
+                <button type="submit" className="flex-1 py-3 bg-vexto-green text-black font-bold rounded-lg text-xs hover:bg-vexto-green/90 transition-colors">
+                  {t.confirmDispatch}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
