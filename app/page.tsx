@@ -2,7 +2,7 @@
 
 import LiveMap from '../components/LiveMap';
 import React, { useEffect, useState } from 'react';
-import { Wifi, ArrowUpRight, TrendingUp, Zap, Activity, BarChart3, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Wifi, ArrowUpRight, TrendingUp, Zap, Activity, BarChart3, Clock, AlertTriangle, CheckCircle2, Truck, MapPin, Search } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { supabase, LiveVehiclePosition } from '../lib/supabaseClient';
 
@@ -25,10 +25,8 @@ export default function Dashboard() {
   const [delayedDeliveriesCount, setDelayedDeliveriesCount] = useState<number>(0);
   const [totalDeliveriesToday, setTotalDeliveriesToday] = useState<number>(0);
 
-  // NOVO: Estado para gerir a aba ativa (Live Map, Fleet, Routes, Analytics)
   const [activeTab, setActiveTab] = useState<'live_map' | 'fleet' | 'routes' | 'analytics'>('live_map');
 
-  // 1. Fetch de Veículos
   useEffect(() => {
     async function fetchVehicles() {
       const { data, error } = await supabase.from('vehicles').select('*');
@@ -44,7 +42,6 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(vehiclesChannel); };
   }, [selectedVehicleId]);
 
-  // 2. Rastreio GPS do Veículo Selecionado
   useEffect(() => {
     if (!selectedVehicleId) return;
     supabase.from('vehicle_positions').select('*').eq('vehicle_id', selectedVehicleId).order('updated_at', { ascending: false }).limit(1)
@@ -57,7 +54,6 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [selectedVehicleId]);
 
-  // 3. Entrega Ativa do Veículo
   useEffect(() => {
     if (!selectedVehicleId) { setActiveDelivery(null); return; }
     const fetchDelivery = async () => {
@@ -75,7 +71,6 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(delChannel); };
   }, [selectedVehicleId]);
 
-  // 4. CÉREBRO ANALÍTICO
   useEffect(() => {
     async function fetchAnalyticsAndSLA() {
       const { data, error } = await supabase.from('deliveries').select('*');
@@ -93,11 +88,9 @@ export default function Dashboard() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
-      // Global Analytics
       const allCompletedToday = data.filter(d => d.status === 'completed' && new Date(d.created_at) >= today);
       setTotalDeliveriesToday(allCompletedToday.length);
 
-      // Veículo Analytics
       if (selectedVehicleId) {
         const completedToday = allCompletedToday.filter(d => d.driver_id === selectedVehicleId);
         if (completedToday.length > 0) {
@@ -133,18 +126,135 @@ export default function Dashboard() {
   const selectedVeh = vehicles.find(v => v.id === selectedVehicleId) || vehicles[0];
 
   return (
-    <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg text-white">
+    <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg text-white font-helvetica-neue">
       
-      {/* RENDERIZAÇÃO CONDICIONAL: MAPA VS ANALYTICS */}
+      {/* RENDERIZAÇÃO DAS ABAS (TABS) */}
       <div className="absolute inset-0 z-0 transition-opacity duration-500">
-        {activeTab === 'live_map' ? (
+        
+        {/* ABA: LIVE MAP */}
+        {activeTab === 'live_map' && (
           <>
             <LiveMap selectedVehicleId={selectedVehicleId} onSelectVehicle={setSelectedVehicleId} />
             <div className="absolute inset-0 bg-vexto-bg/40 pointer-events-none"></div>
           </>
-        ) : (
-          <div className="w-full h-full p-32 pl-120 pt-40 overflow-y-auto custom-scrollbar">
-             {/* CONTEÚDO DA ABA ANALYTICS */}
+        )}
+
+        {/* ABA: FLEET (FROTA) */}
+        {activeTab === 'fleet' && (
+          <div className="w-full h-full p-32 pl-120 pt-40 overflow-y-auto custom-scrollbar animate-in fade-in duration-300">
+            <div className="max-w-6xl">
+              <div className="flex justify-between items-end mb-12">
+                <div>
+                  <h2 className="text-3xl font-medium tracking-tight mb-2">Diretório de Frota</h2>
+                  <p className="text-vexto-textMuted text-sm">Gestão completa de ativos, veículos e estado operacional.</p>
+                </div>
+                <div className="glass-panel px-4 py-2 border border-white/10 rounded-lg flex items-center gap-2">
+                  <Search className="w-4 h-4 text-vexto-textMuted" />
+                  <input type="text" placeholder="Procurar veículo..." className="bg-transparent border-none text-sm text-white outline-none placeholder:text-vexto-textMuted w-48" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-6">
+                {vehicles.map(v => (
+                  <div key={v.id} className="glass-panel p-6 border border-white/5 rounded-2xl flex flex-col gap-4 hover:border-white/20 transition-all cursor-pointer group">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center border border-white/10 group-hover:border-vexto-green/50 transition-colors">
+                          <Truck className="w-5 h-5 text-vexto-textMuted group-hover:text-vexto-green" />
+                        </div>
+                        <div>
+                          <h3 className="text-white font-medium">{v.display_name}</h3>
+                          <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">{v.plate}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${v.status === 'online' ? 'bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-vexto-red'}`}></span>
+                      </div>
+                    </div>
+                    <div className="pt-4 border-t border-white/5 flex justify-between items-center text-xs">
+                      <span className="text-vexto-textMuted">Estado Atual:</span>
+                      <span className={v.status === 'online' ? 'text-vexto-green font-medium' : 'text-vexto-red font-medium'}>
+                        {v.status === 'online' ? 'Ativo / Em Campo' : 'Offline / Garagem'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ABA: ROUTES (ROTAS) */}
+        {activeTab === 'routes' && (
+          <div className="w-full h-full p-32 pl-120 pt-40 overflow-y-auto custom-scrollbar animate-in fade-in duration-300">
+            <div className="max-w-6xl">
+              <div className="mb-12">
+                <h2 className="text-3xl font-medium tracking-tight mb-2">Monitoramento de Rotas</h2>
+                <p className="text-vexto-textMuted text-sm">Cronograma logístico, entregas em curso e pontos de passagem.</p>
+              </div>
+
+              <div className="flex flex-col gap-4">
+                {/* Rota Ativa Mockada baseada no Vexto Design */}
+                <div className="glass-panel p-6 border border-white/10 rounded-2xl flex items-center justify-between hover:border-vexto-green/50 transition-all cursor-pointer">
+                  <div className="flex items-center gap-6 w-1/3">
+                    <div className="w-12 h-12 rounded-full bg-vexto-green/10 border border-vexto-green/30 flex items-center justify-center">
+                      <Truck className="w-5 h-5 text-vexto-green" />
+                    </div>
+                    <div>
+                      <h4 className="text-white font-medium">{selectedVeh?.display_name || 'Bus 6023'}</h4>
+                      <p className="text-vexto-green text-[10px] uppercase tracking-widest font-bold mt-1">Rota Ativa</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1 flex items-center justify-center gap-4">
+                    <div className="flex flex-col items-end">
+                      <span className="text-white text-sm font-medium">Centro Logístico</span>
+                      <span className="text-vexto-textMuted text-[10px]">Partida: 08:00 AM</span>
+                    </div>
+                    <div className="w-32 h-px bg-white/20 relative">
+                      <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-vexto-green animate-ping"></div>
+                    </div>
+                    <div className="flex flex-col items-start">
+                      <span className="text-white text-sm font-medium">TechCorp Lda</span>
+                      <span className="text-vexto-textMuted text-[10px]">Previsão: 11:30 AM</span>
+                    </div>
+                  </div>
+
+                  <div className="w-1/4 flex justify-end">
+                    <span className="px-3 py-1 bg-white/5 border border-white/10 rounded-lg text-xs text-white flex items-center gap-2">
+                      <MapPin className="w-3 h-3 text-vexto-textMuted" /> Em Trânsito
+                    </span>
+                  </div>
+                </div>
+
+                {/* Rota Concluída Mockada */}
+                <div className="glass-panel p-6 border border-white/5 rounded-2xl flex items-center justify-between opacity-60 hover:opacity-100 transition-all">
+                  <div className="flex items-center gap-6 w-1/3">
+                    <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+                      <CheckCircle2 className="w-5 h-5 text-vexto-textMuted" />
+                    </div>
+                    <div>
+                      <h4 className="text-white font-medium">E-Bus 07</h4>
+                      <p className="text-vexto-textMuted text-[10px] uppercase tracking-widest mt-1">Concluída</p>
+                    </div>
+                  </div>
+                  <div className="flex-1 flex items-center justify-center gap-4">
+                    <span className="text-vexto-textMuted text-sm">Armazém Norte</span>
+                    <div className="w-32 h-px bg-white/10"></div>
+                    <span className="text-vexto-textMuted text-sm">Zona Sul</span>
+                  </div>
+                  <div className="w-1/4 flex justify-end">
+                    <span className="text-vexto-textMuted text-xs">Entregue às 09:15 AM</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ABA: ANALYTICS (GRÁFICOS) */}
+        {activeTab === 'analytics' && (
+          <div className="w-full h-full p-32 pl-120 pt-40 overflow-y-auto custom-scrollbar animate-in fade-in duration-300">
              <div className="max-w-6xl">
                 <div className="mb-12">
                    <h2 className="text-3xl font-medium tracking-tight mb-2">Visão Geral da Frota</h2>
@@ -194,7 +304,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* MENU SUPERIOR ESQUERDO (AGORA FUNCIONAL!) */}
+      {/* MENU SUPERIOR ESQUERDO */}
       <div className="absolute top-8 left-112.5 z-20 flex flex-col gap-2">
         <div className="glass-panel px-8 py-3 rounded-full flex items-center gap-8 border border-white/5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
           
@@ -203,9 +313,15 @@ export default function Dashboard() {
             <span className={`text-sm font-medium transition-colors ${activeTab === 'live_map' ? 'text-white' : 'text-vexto-textMuted group-hover:text-white'}`}>Live Map</span>
           </button>
           
-          <button onClick={() => setActiveTab('fleet')} className={`text-sm font-medium transition-colors hover:text-white ${activeTab === 'fleet' ? 'text-white' : 'text-vexto-textMuted'}`}>Fleet</button>
+          <button onClick={() => setActiveTab('fleet')} className="flex items-center gap-2 cursor-pointer group">
+            <div className={`w-1.5 h-1.5 rounded-full ${activeTab === 'fleet' ? 'bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-transparent group-hover:bg-white/50 transition-colors'}`}></div>
+            <span className={`text-sm font-medium transition-colors ${activeTab === 'fleet' ? 'text-white' : 'text-vexto-textMuted group-hover:text-white'}`}>Fleet</span>
+          </button>
           
-          <button onClick={() => setActiveTab('routes')} className={`text-sm font-medium transition-colors hover:text-white ${activeTab === 'routes' ? 'text-white' : 'text-vexto-textMuted'}`}>Routes</button>
+          <button onClick={() => setActiveTab('routes')} className="flex items-center gap-2 cursor-pointer group">
+            <div className={`w-1.5 h-1.5 rounded-full ${activeTab === 'routes' ? 'bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-transparent group-hover:bg-white/50 transition-colors'}`}></div>
+            <span className={`text-sm font-medium transition-colors ${activeTab === 'routes' ? 'text-white' : 'text-vexto-textMuted group-hover:text-white'}`}>Routes</span>
+          </button>
           
           <button onClick={() => setActiveTab('analytics')} className="flex items-center gap-2 cursor-pointer group">
             <div className={`w-1.5 h-1.5 rounded-full ${activeTab === 'analytics' ? 'bg-vexto-green shadow-[0_0_8px_rgba(34,197,94,0.8)]' : 'bg-transparent group-hover:bg-white/50 transition-colors'}`}></div>
@@ -215,7 +331,7 @@ export default function Dashboard() {
         </div>
         
         {isLiveGpsActive && activeTab === 'live_map' && (
-          <div className="glass-panel px-4 py-1.5 rounded-full flex w-fit items-center gap-2 border border-vexto-green/30">
+          <div className="glass-panel px-4 py-1.5 rounded-full flex w-fit items-center gap-2 border border-vexto-green/30 animate-in fade-in">
             <span className="w-1.5 h-1.5 rounded-full bg-vexto-green animate-pulse"></span>
             <span className="text-vexto-green text-xs font-medium tracking-wide">GPS REAL AO VIVO</span>
           </div>
@@ -361,7 +477,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ALERTA DE SLA */}
+      {/* ALERTA DE SLA (Apenas no mapa) */}
       {delayedDeliveriesCount > 0 && activeTab === 'live_map' && (
         <div className="absolute bottom-8 left-110 z-20 flex flex-col gap-3 pointer-events-none">
           <div className="glass-panel w-80 p-5 pointer-events-auto border-vexto-red/30 shadow-[0_10px_40px_rgba(239,68,68,0.15)] backdrop-blur-xl bg-black/40 animate-in fade-in slide-in-from-bottom-4 duration-500">
