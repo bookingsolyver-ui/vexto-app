@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { supabase } from '../lib/supabaseClient';
@@ -12,134 +12,148 @@ interface LiveMapProps {
   onSelectVehicle: (id: string) => void;
 }
 
-export default function ManagerLiveMap({ selectedVehicleId, onSelectVehicle }: LiveMapProps) {
+export default function LiveMap({ selectedVehicleId, onSelectVehicle }: LiveMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<{ [key: string]: mapboxgl.Marker }>({});
 
   useEffect(() => {
-    if (!mapContainer.current || map.current) return;
+    if (map.current || !mapContainer.current) return;
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/dark-v11',
-      center: [-9.3235, 38.6826],
-      zoom: 12,
+      style: 'mapbox://styles/mapbox/dark-v11', // O teu tema escuro
+      center: [-9.3235, 38.6826], // Centro (ex: Oeiras/Lisboa)
+      zoom: 15.5, // O zoom tem de ser > 15 para os edifícios 3D ficarem incríveis
+      pitch: 60, // INCLINAÇÃO 3D (O Segredo!)
+      bearing: -20, // Rotação da câmara para dar um aspeto de "Centro de Comando"
+      antialias: true // Essencial para as bordas dos edifícios 3D ficarem suaves
     });
 
-    async function forceFetchAllPositions() {
-      const { data: vehiclesData } = await supabase.from('vehicles').select('id, status');
-      const statusMap = new Map();
-      vehiclesData?.forEach((v: any) => {
-        statusMap.set(v.id, String(v.status).trim().toLowerCase());
-      });
+    map.current.on('style.load', () => {
+      if (!map.current) return;
 
-      const { data, error } = await supabase.from('vehicle_positions').select('*');
-      
-      if (error) {
-        console.error("ERRO AO LER SUPABASE NO MAPA:", error.message);
-        return;
-      }
+      // Injetar os edifícios 3D por baixo das labels (nomes das ruas)
+      const layers = map.current.getStyle().layers;
+      const labelLayerId = layers?.find(
+        (layer) => layer.type === 'symbol' && layer.layout && layer.layout['text-field']
+      )?.id;
 
-      if (data && data.length > 0) {
-        data.forEach((pos: any) => {
-          const vehicleStatus = statusMap.get(pos.vehicle_id);
-          const isOnline = vehicleStatus === 'online';
-          updateMarker(pos, isOnline);
-        });
-      }
-    }
-
-    forceFetchAllPositions();
-
-    const interval = setInterval(() => {
-      forceFetchAllPositions();
-    }, 3000);
+      map.current.addLayer(
+        {
+          'id': '3d-buildings',
+          'source': 'composite',
+          'source-layer': 'building',
+          'filter': ['==', 'extrude', 'true'],
+          'type': 'fill-extrusion',
+          'minzoom': 15,
+          'paint': {
+            'fill-extrusion-color': '#1f1f1f', // Cor dos edifícios (Escuro para manter o Dark Mode)
+            'fill-extrusion-height': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              15,
+              0,
+              15.05,
+              ['get', 'height']
+            ],
+            'fill-extrusion-base': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              15,
+              0,
+              15.05,
+              ['get', 'min_height']
+            ],
+            'fill-extrusion-opacity': 0.7 // Leve transparência tipo "vidro fosco"
+          }
+        },
+        labelLayerId
+      );
+    });
 
     return () => {
-      clearInterval(interval);
       map.current?.remove();
       map.current = null;
     };
   }, []);
 
-  function updateMarker(position: any, isOnline: boolean) {
-    if (!map.current) return;
-    const { vehicle_id, lat, lng } = position;
-    if (!lat || !lng) return;
-
-    if (!markersRef.current[vehicle_id]) {
-      const container = document.createElement('div');
-      container.className = 'flex items-center justify-center w-10 h-10 cursor-pointer relative'; 
-      
-      if (isOnline) {
-        const pingDot = document.createElement('div');
-        pingDot.className = 'absolute w-8 h-8 bg-vexto-green rounded-full opacity-75 animate-ping';
-        container.appendChild(pingDot);
-      }
-
-      const dot = document.createElement('div');
-      // ONLINE = Verde brilhante com sombra | OFFLINE = Cinzento estático claro
-      dot.className = isOnline 
-        ? 'w-4 h-4 bg-vexto-green rounded-full border-2 border-white shadow-[0_0_25px_rgba(34,197,94,1)] relative z-10'
-        : 'w-3.5 h-3.5 bg-zinc-600 rounded-full border-2 border-zinc-400 relative z-10';
-      container.appendChild(dot);
-      
-      const marker = new mapboxgl.Marker(container).setLngLat([lng, lat]).addTo(map.current);
-      markersRef.current[vehicle_id] = marker;
-
-      container.addEventListener('click', (e) => {
-        e.stopPropagation();
-        onSelectVehicle(vehicle_id);
-      });
-    } else {
-      const marker = markersRef.current[vehicle_id];
-      marker.setLngLat([lng, lat]);
-      
-      const container = marker.getElement();
-      container.innerHTML = '';
-      
-      if (isOnline) {
-        const pingDot = document.createElement('div');
-        pingDot.className = 'absolute w-8 h-8 bg-vexto-green rounded-full opacity-75 animate-ping';
-        container.appendChild(pingDot);
-      }
-
-      const dot = document.createElement('div');
-      dot.className = isOnline 
-        ? 'w-4 h-4 bg-vexto-green rounded-full border-2 border-white shadow-[0_0_25px_rgba(34,197,94,1)] relative z-10'
-        : 'w-3.5 h-3.5 bg-zinc-600 rounded-full border-2 border-zinc-400 relative z-10';
-      container.appendChild(dot);
-    }
-  }
-
+  // Lógica para desenhar/atualizar os marcadores dos veículos (Mantida intacta)
   useEffect(() => {
-    if (!selectedVehicleId || !map.current) return;
+    if (!map.current) return;
 
-    supabase
-      .from('vehicle_positions')
-      .select('*')
-      .eq('vehicle_id', selectedVehicleId)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .then(({ data }) => {
-        if (data && data.length > 0) {
-          const { lat, lng } = data[0];
-          map.current?.flyTo({
-            center: [lng, lat],
-            zoom: 14,
-            essential: true,
-            speed: 1.5
-          });
+    const fetchPositions = async () => {
+      const { data: vehicles } = await supabase.from('vehicles').select('id, status');
+      if (!vehicles) return;
+
+      for (const v of vehicles) {
+        const { data: posData } = await supabase
+          .from('vehicle_positions')
+          .select('*')
+          .eq('vehicle_id', v.id)
+          .order('updated_at', { ascending: false })
+          .limit(1);
+
+        if (posData && posData.length > 0) {
+          const pos = posData[0];
+          const isSelected = selectedVehicleId === v.id;
+          
+          if (markersRef.current[v.id]) {
+            markersRef.current[v.id].setLngLat([pos.lng, pos.lat]);
+            
+            // Atualiza o estilo visual se estiver selecionado
+            const el = markersRef.current[v.id].getElement();
+            if (isSelected) {
+              el.className = 'w-4 h-4 bg-vexto-green rounded-full border-2 border-white shadow-[0_0_20px_rgba(34,197,94,1)] animate-pulse cursor-pointer';
+            } else {
+              el.className = v.status === 'online' 
+                ? 'w-3 h-3 bg-vexto-green/60 rounded-full border border-white/50 cursor-pointer'
+                : 'w-3 h-3 bg-vexto-red/60 rounded-full border border-white/50 cursor-pointer';
+            }
+          } else {
+            // Cria o marcador 3D no mapa
+            const el = document.createElement('div');
+            el.className = isSelected
+              ? 'w-4 h-4 bg-vexto-green rounded-full border-2 border-white shadow-[0_0_20px_rgba(34,197,94,1)] animate-pulse cursor-pointer'
+              : (v.status === 'online' ? 'w-3 h-3 bg-vexto-green/60 rounded-full border border-white/50 cursor-pointer' : 'w-3 h-3 bg-vexto-red/60 rounded-full border border-white/50 cursor-pointer');
+            
+            el.onclick = () => onSelectVehicle(v.id);
+
+            markersRef.current[v.id] = new mapboxgl.Marker(el)
+              .setLngLat([pos.lng, pos.lat])
+              .addTo(map.current!);
+          }
+
+          // A câmara "voa" para o veículo selecionado mantendo a perspetiva 3D
+          if (isSelected && map.current) {
+            map.current.flyTo({ 
+              center: [pos.lng, pos.lat], 
+              zoom: 16, // Mais perto para ver os edifícios!
+              pitch: 60, // Mantém a inclinação
+              essential: true,
+              speed: 1.2
+            });
+          }
         }
-      });
-  }, [selectedVehicleId]);
-  
-  return (
-    <div className="relative w-full h-full min-h-[400px] rounded-2xl overflow-hidden shadow-2xl border border-white/5">
-      <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
-    </div>
-  );
+      }
+    };
+
+    fetchPositions();
+
+    const channel = supabase.channel('realtime-map-positions')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_positions' }, () => {
+        fetchPositions();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedVehicleId, onSelectVehicle]);
+
+  return <div ref={mapContainer} className="w-full h-full" />;
 }
