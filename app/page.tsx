@@ -2,7 +2,7 @@
 
 import LiveMap from '../components/LiveMap';
 import React, { useEffect, useState } from 'react';
-import { Wifi, ArrowUpRight } from 'lucide-react';
+import { Wifi, ArrowUpRight, TrendingUp, Zap, Activity } from 'lucide-react';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { supabase, LiveVehiclePosition } from '../lib/supabaseClient';
 
@@ -93,11 +93,13 @@ export default function Dashboard() {
 
   return (
     <main className="h-screen w-full relative flex overflow-hidden bg-vexto-bg">
+      {/* MAPA */}
       <div className="absolute inset-0 z-0">
         <LiveMap selectedVehicleId={selectedVehicleId} onSelectVehicle={setSelectedVehicleId} />
         <div className="absolute inset-0 bg-vexto-bg/40 pointer-events-none"></div>
       </div>
 
+      {/* MENU SUPERIOR ESQUERDO */}
       <div className="absolute top-8 left-112.5 z-20 flex flex-col gap-2">
         <div className="glass-panel px-8 py-3 rounded-full flex items-center gap-8 border border-white/5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
           <div className="flex items-center gap-2 cursor-pointer">
@@ -116,6 +118,27 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* NOVO: BLOCO DE MÉTRICAS GLOBAIS NO CANTO SUPERIOR DIREITO */}
+      <div className="absolute top-8 right-8 z-20 flex gap-4 pointer-events-none">
+        <div className="glass-panel px-5 py-3 rounded-xl flex items-center gap-4 border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] pointer-events-auto">
+           <div className="flex flex-col">
+             <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest flex items-center gap-1"><Activity className="w-3 h-3 text-vexto-green"/> Eficiência Global</span>
+             <span className="text-xl text-white font-medium">78.3%</span>
+           </div>
+           <div className="w-px h-8 bg-white/10"></div>
+           <div className="flex flex-col">
+             <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest flex items-center gap-1"><Zap className="w-3 h-3 text-vexto-green"/> IA Scanning</span>
+             <span className="text-xl text-white font-medium">+48.4%</span>
+           </div>
+           <div className="w-px h-8 bg-white/10"></div>
+           <div className="flex flex-col">
+             <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest flex items-center gap-1"><TrendingUp className="w-3 h-3 text-vexto-green"/> Mkt Shift</span>
+             <span className="text-xl text-white font-medium">72%</span>
+           </div>
+        </div>
+      </div>
+
+      {/* BARRA LATERAL (LISTA DE VEÍCULOS) - INTOCÁVEL */}
       <div className="glass-panel w-105 h-full rounded-none relative z-10 flex flex-col bg-vexto-bg/80 backdrop-blur-xl border-y-0 border-l-0 border-r border-white/5 overflow-hidden">
         <header className="p-8 pb-6 shrink-0">
           <div className="flex items-center gap-3 mb-8">
@@ -188,6 +211,7 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* PAINEL DE ANÁLISE INFERIOR - INTOCÁVEL */}
       <div className="absolute bottom-8 right-8 z-20 flex items-end gap-6 pointer-events-none">
         <div className="glass-panel w-120 p-6 pointer-events-auto border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col justify-between">
            <div className="flex justify-between items-start mb-5">
@@ -211,7 +235,7 @@ export default function Dashboard() {
               </div>
            </div>
 
-<div>
+           <div>
               <div className="flex justify-between items-end mb-2">
                 <span className="text-vexto-textMuted text-[10px] uppercase tracking-widest">Número de Horas Trabalhadas (Hoje)</span>
                 <span className="text-2xl text-functional text-white">
