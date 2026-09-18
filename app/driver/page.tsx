@@ -3,8 +3,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { supabase } from '../../lib/supabaseClient'; // Ajusta o caminho se necessário
-import { Navigation, PowerOff, Wifi, Truck, PlusCircle, Signal } from 'lucide-react';
+import { supabase } from '../../lib/supabaseClient'; 
+import { Navigation, PowerOff, Wifi, Truck, PlusCircle, Signal, Package, MapPin, CheckCircle2 } from 'lucide-react';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
 
@@ -13,19 +13,20 @@ export default function DriverPage() {
   const [selectedVehicle, setSelectedVehicle] = useState<any>(null);
   const [isRegisteringNew, setIsRegisteringNew] = useState(false);
   
-  // Novos campos para cadastro
   const [newDisplayName, setNewDisplayName] = useState('');
   const [newPlate, setNewPlate] = useState('');
 
   const [tracking, setTracking] = useState(false);
   const [sentCount, setSentCount] = useState(0);
 
+  // NOVO: Estado da entrega
+  const [activeDelivery, setActiveDelivery] = useState<any>(null);
+
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markerRef = useRef<mapboxgl.Marker | null>(null);
   const watchIdRef = useRef<number | null>(null);
 
-  // Buscar veículos já criados na base de dados ao abrir
   useEffect(() => {
     async function fetchVehicles() {
       const { data } = await supabase.from('vehicles').select('*');
@@ -34,7 +35,6 @@ export default function DriverPage() {
     fetchVehicles();
   }, []);
 
-  // Registar um veículo novo e selecioná-lo
   async function handleCreateNewVehicle(e: React.FormEvent) {
     e.preventDefault();
     if (!newDisplayName || !newPlate) return;
@@ -63,7 +63,7 @@ export default function DriverPage() {
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [-9.3235, 38.6826],
       zoom: 15,
-      pitch: 45, // Dá um ângulo 3D estilo navegação
+      pitch: 45,
     });
 
     map.current.on('load', () => {
@@ -82,10 +82,39 @@ export default function DriverPage() {
     };
   }, [tracking]);
 
+  // NOVO: Escutar Entregas do Supabase
+  useEffect(() => {
+    if (!tracking || !selectedVehicle) return;
+
+    const fetchDelivery = async () => {
+      const { data } = await supabase
+        .from('deliveries')
+        .select('*')
+        .eq('driver_id', selectedVehicle.id)
+        .eq('status', 'in_progress')
+        .maybeSingle();
+      setActiveDelivery(data || null);
+    };
+
+    fetchDelivery();
+
+    const channel = supabase.channel(`driver-del-${selectedVehicle.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deliveries', filter: `driver_id=eq.${selectedVehicle.id}` },
+        (payload: any) => {
+          if (payload.new && payload.new.status === 'in_progress') {
+            setActiveDelivery(payload.new);
+          } else {
+            setActiveDelivery(null);
+          }
+        }
+      ).subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [tracking, selectedVehicle]);
+
   async function startTracking() {
     if (!navigator.geolocation || !selectedVehicle) return;
 
-    // TORNA O VEÍCULO ONLINE NO SUPABASE AO INICIAR TURNO
     await supabase.from('vehicles').update({ status: 'online' }).eq('id', selectedVehicle.id);
 
     watchIdRef.current = navigator.geolocation.watchPosition(
@@ -120,7 +149,6 @@ export default function DriverPage() {
     setTracking(true);
   }
 
-  // TORNA O VEÍCULO OFFLINE AUTOMATICAMENTE AO FECHAR OU SAIR
   async function stopTracking() {
     if (selectedVehicle) {
       await supabase.from('vehicles').update({ status: 'offline' }).eq('id', selectedVehicle.id);
@@ -130,7 +158,26 @@ export default function DriverPage() {
     setSelectedVehicle(null);
   }
 
-  // Ecrã 1: Escolher veículo existente ou criar novo
+  // NOVO: Funções de Ciclo de Vida da Entrega
+  async function simulateNewDelivery() {
+    const newDelivery = {
+      id: crypto.randomUUID(),
+      driver_id: selectedVehicle.id,
+      status: 'in_progress',
+      // Caso a tua tabela deliveries não tenha estas colunas de morada, o Supabase ignora ou podes adicionar depois.
+      // O essencial para o Dashboard reagir é o status='in_progress' e o driver_id.
+    };
+    
+    await supabase.from('deliveries').insert(newDelivery);
+    setActiveDelivery({ ...newDelivery, destination: 'Avenida da Liberdade, 110', customer: 'TechCorp Lda' });
+  }
+
+  async function completeDelivery() {
+    if (!activeDelivery) return;
+    await supabase.from('deliveries').update({ status: 'completed' }).eq('id', activeDelivery.id);
+    setActiveDelivery(null);
+  }
+
   if (!selectedVehicle) {
     return (
       <main className="min-h-screen bg-vexto-bg text-white flex flex-col items-center justify-center p-6 gap-8">
@@ -183,7 +230,6 @@ export default function DriverPage() {
     );
   }
 
-  // Ecrã 2: Botão de Iniciar Turno
   if (!tracking) {
     return (
       <main className="min-h-screen bg-vexto-bg text-white flex flex-col items-center justify-between p-8">
@@ -208,12 +254,11 @@ export default function DriverPage() {
     );
   }
 
-  // Ecrã 3: Em Rastreio Ativo (Telemetria Mobile)
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-vexto-bg">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full z-0" />
       
-      {/* HUD Superior Estilo Telemetria Vexto */}
+      {/* HUD Superior */}
       <div className="absolute top-8 inset-x-6 z-10 glass-panel p-4 border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col gap-3 bg-vexto-bg/90 backdrop-blur-md">
         <div className="flex justify-between items-start">
            <div>
@@ -226,16 +271,44 @@ export default function DriverPage() {
            </div>
         </div>
         <div className="flex justify-between items-center text-[10px] text-vexto-textMuted pt-2 border-t border-white/10">
-           <span className="flex items-center gap-1"><Signal className="w-3 h-3 text-white" /> GPS LTE Ativo</span>
+           <span className="flex items-center gap-1"><Signal className="w-3 h-3 text-white" /> GPS Ativo</span>
            <span>Pacotes: {sentCount}</span>
         </div>
       </div>
 
-      {/* Botão de Fechar Turno */}
-      <div className="absolute bottom-10 inset-x-6 z-10 flex items-center justify-center">
-        <button onClick={stopTracking} className="w-full glass-panel flex items-center justify-center gap-3 bg-vexto-red/10 hover:bg-vexto-red/20 border border-vexto-red/30 text-vexto-red px-4 py-4 transition-all duration-300">
+      {/* NOVO: CARD DE GESTÃO DE ENTREGAS */}
+      <div className="absolute bottom-6 inset-x-4 z-10 flex flex-col gap-3">
+        
+        {/* Se tem entrega ativa, mostra o cartão da entrega */}
+        {activeDelivery ? (
+          <div className="glass-panel p-5 border border-amber-500/30 bg-black/80 backdrop-blur-xl shadow-[0_10px_40px_rgba(245,158,11,0.15)] rounded-2xl flex flex-col gap-4">
+            <div className="flex items-center gap-2">
+              <Package className="w-5 h-5 text-amber-500" />
+              <span className="text-white text-sm font-bold tracking-wide uppercase">Entrega em Curso</span>
+            </div>
+            
+            <div className="flex flex-col gap-1 pl-7">
+              <span className="text-white text-base">{activeDelivery.destination || 'Avenida da Liberdade, 110'}</span>
+              <span className="text-vexto-textMuted text-xs flex items-center gap-1">
+                 Cliente: {activeDelivery.customer || 'TechCorp Lda'}
+              </span>
+            </div>
+
+            <button onClick={completeDelivery} className="mt-2 w-full flex items-center justify-center gap-2 bg-vexto-green text-black px-4 py-3 rounded-xl hover:bg-vexto-green/90 transition-all font-bold text-sm shadow-[0_0_20px_rgba(34,197,94,0.3)]">
+              <CheckCircle2 className="w-5 h-5" /> CONCLUIR ENTREGA
+            </button>
+          </div>
+        ) : (
+          /* Se NÃO tem entrega, botão para pedir novo serviço */
+          <button onClick={simulateNewDelivery} className="glass-panel p-4 border border-white/20 bg-black/60 backdrop-blur-xl rounded-2xl flex items-center justify-center gap-2 text-white hover:border-white/40 transition-all font-medium text-sm">
+            <MapPin className="w-4 h-4 text-vexto-textMuted" /> Receber Nova Entrega
+          </button>
+        )}
+
+        {/* Botão de Fechar Turno original */}
+        <button onClick={stopTracking} className="w-full glass-panel flex items-center justify-center gap-3 bg-vexto-red/10 hover:bg-vexto-red/20 border border-vexto-red/30 text-vexto-red px-4 py-4 rounded-2xl transition-all duration-300">
           <PowerOff className="w-5 h-5" />
-          <span className="text-sm font-bold tracking-wider">TERMINAR TURNO E FICAR OFFLINE</span>
+          <span className="text-sm font-bold tracking-wider">TERMINAR TURNO</span>
         </button>
       </div>
     </main>
